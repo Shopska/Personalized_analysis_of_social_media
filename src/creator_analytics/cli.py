@@ -18,7 +18,7 @@ import logging
 import sys
 
 from creator_analytics.config import load_config
-from creator_analytics.data import filter_creators, load_raw_data
+from creator_analytics.data import filter_creators, load_raw_table
 from creator_analytics.utils import set_seed, setup_logging
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ def cmd_data_summary(config: dict) -> int:
     author_column = data_cfg["author_column"]
     min_videos = data_cfg["min_videos_per_creator"]
 
-    df = load_raw_data(config["paths"]["raw_data"])
+    df = load_raw_table(config["paths"]["raw_dir"], "videos")
     filtered = filter_creators(df, author_column, min_videos)
 
     logger.info("Raw dataset: %d videos, %d creators", len(df), df[author_column].nunique())

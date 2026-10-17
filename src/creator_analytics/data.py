@@ -8,50 +8,51 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 
 
-def materialize_raw_data(
-    output_path: str | Path,
-    hf_repo: str,
-    hf_config: str | None = None,
-    hf_split: str = "train",
-) -> pd.DataFrame:
-    """Download the dataset from Hugging Face and save it to ``output_path`` as Parquet.
+def raw_table_path(raw_dir: str | Path, table: str) -> Path:
+    """Return the local Parquet path for a named table."""
+    return Path(raw_dir) / f"{table}.parquet"
 
-    This is the only place the dataset is fetched from the internet: everything else in
-    the project reads the local Parquet file. Parquet (not CSV) because the dataset has
-    long text columns (``transcript``, ``gpt_summary``) that CSV handles badly, and
-    210k rows are several times smaller and faster to read as Parquet.
+
+def materialize_raw_table(
+    raw_dir: str | Path,
+    table: str,
+    hf_repo: str,
+    hf_split: str = "train",
+) -> None:
+    """Download one HF dataset subset and write it directly to Parquet (no pandas).
+
+    Uses ``Dataset.to_parquet`` so the full table never materialises as a pandas
+    DataFrame — important for engagement_daily (~6 M rows).
 
     Parameters
     ----------
-    output_path : str or Path
-        Where to write the file, e.g. ``data/raw/videos.parquet``.
+    raw_dir : str or Path
+        Directory where ``<table>.parquet`` will be written.
+    table : str
+        HF subset/config name, e.g. ``"videos"``, ``"creator_daily"``,
+        ``"engagement_daily"``.
     hf_repo : str
         Dataset id on the Hub, e.g. ``lingbow/tiktok-video-engagement-200k``.
-    hf_config : str, optional
-        Subset name, if the dataset has several (check its page on the Hub).
     hf_split : str
         Which split to download, usually ``"train"``.
     """
     from datasets import load_dataset  # imported here: only this function needs it
 
-    dataset = load_dataset(hf_repo, hf_config, split=hf_split)
-    df = dataset.to_pandas()
-
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(output_path, index=False)
-    return df
+    path = raw_table_path(raw_dir, table)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    dataset = load_dataset(hf_repo, table, split=hf_split)
+    dataset.to_parquet(str(path))
 
 
-def load_raw_data(path: str | Path) -> pd.DataFrame:
-    """Read the downloaded dataset back from disk.
+def load_raw_table(raw_dir: str | Path, table: str) -> pd.DataFrame:
+    """Read a downloaded table from disk.
 
     Raises
     ------
     FileNotFoundError
         With a hint to run ``python scripts/download_data.py`` first.
     """
-    path = Path(path)
+    path = raw_table_path(raw_dir, table)
     if not path.exists():
         raise FileNotFoundError(
             f"{path} does not exist yet. Run `python scripts/download_data.py` first."

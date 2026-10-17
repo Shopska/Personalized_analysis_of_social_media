@@ -1,7 +1,7 @@
 # data/ — data card
 
-> Status: partially filled before EDA. Sections marked **TODO (after EDA)** will be
-> completed once the dataset is downloaded and explored in `notebooks/01-eda.ipynb`.
+> EDA completed 2026-10-17. All numbers from `python scripts/eda.py` after
+> downloading via `python scripts/download_data.py`.
 
 ## Name and source
 
@@ -9,10 +9,9 @@
 Hugging Face Datasets.
 
 - Dataset page: <https://huggingface.co/datasets/lingbow/tiktok-video-engagement-200k>
-- Approximately 210,000 TikTok videos, each linked to its creator via `author_id`,
-  which is what makes per-creator modeling possible.
-- Besides the main video-level table, the dataset includes two auxiliary tables:
-  `creator_daily` and `engagement_daily`.
+- Three subsets: `videos`, `creator_daily`, `engagement_daily`, each with a single
+  split called `"train"`.
+- 1,872 unique creators; `author_id` is the join key across all three tables.
 - Content features were pre-extracted by the dataset authors using AI tools
   (transcripts, generated summaries, emotion scores, topic labels). We use these
   as-is instead of running our own video analysis.
@@ -32,42 +31,122 @@ What this means for this project:
 - We do **not** redistribute the data: it is downloaded on demand by
   `scripts/download_data.py` and never committed to git.
 
-**Citation**: TODO — check the dataset page for a preferred citation; until then, cite
-the dataset by its Hugging Face id and URL above.
-
 ## Size and format
 
-- ~210,000 rows (one row per video) in the main table
-- Stored locally as one Parquet file: `data/raw/videos.parquet`. Parquet rather than CSV
-  because of the long free-text columns (`transcript`, `gpt_summary`) and the row count.
-- File size on disk: **TODO (after download)**
-- No train/test files on disk — the split is computed at runtime from a fixed seed
-  (see "Splits" below).
+Three Parquet files in `data/raw/`, downloaded by `scripts/download_data.py`.
+
+| Table              | Rows       | Cols | File size |
+|--------------------|------------|------|-----------|
+| `videos`           | 209,543    | 33   | 175.1 MB  |
+| `creator_daily`    | 278,433    | 7    | 3.1 MB    |
+| `engagement_daily` | 6,068,955  | 10   | 31.8 MB   |
+
+Date range covered: **2024-06-24 – 2024-11-09** (videos); creator_daily and
+engagement_daily extend to 2024-12-09 (data collected after the last video was posted).
 
 ## Schema
 
-Columns we plan to use, based on the dataset description. Types, exact column names
-and the full column list will be confirmed after download (`download_data.py` prints
-every column name).
+### `videos` — one row per video
 
-| Column | Type | Description | Used as |
+| Column | Type | Null % | Notes |
 |---|---|---|---|
-| `author_id` | TODO | Creator identifier | Grouping key for per-creator models and for the split |
-| `transcript` | text | Speech transcript of the video | Source for text features |
-| `gpt_summary` | text | AI-generated summary of the video | Source for text features |
-| emotion scores | numeric | Emotional tone of the video (exact columns TODO) | Features |
-| `topic` | categorical | Topic category of the video | Feature |
-| `music_selected_from` | categorical | Where the music was selected from | Proxy for the editing template type |
-| performance metric(s) | numeric | Views / likes / comments / shares (exact columns TODO) | Target variable — **to be chosen after EDA** |
+| `video_id` | str | 0 | Primary key |
+| `author_id` | str | 0 | Join key to creator_daily and engagement_daily |
+| `create_time` | str | 0 | Timestamp as string |
+| `create_date` | str | 0 | Date portion of create_time |
+| `duration` | float64 | 0 | Video duration in seconds |
+| `ratio` | str | 0 | Aspect ratio |
+| `desc_language` | str | 0 | Detected language of description |
+| `is_english` | int64 | 0 | 1 if desc_language == en |
+| `desc` | str | 9.1% | Video caption/description |
+| `sticker_text` | str | 52.8% | Text overlaid as stickers |
+| `hashtags` | object | 0 | List of hashtag strings |
+| `created_by_ai` | float64 | ~0 | AI-generated flag |
+| `is_ads` | str | 0 | Ad / non-ad label |
+| `music_selected_from` | str | 1.3% | Source of background music |
+| `music_album` | str | 77.6% | Album name (mostly null) |
+| `music_author` | str | 0.2% | Music artist |
+| `music_owner_id` | str | 24.5% | Music owner identifier |
+| `music_id` | str | ~0 | Music track identifier |
+| `music_title` | str | 0.1% | Music track title |
+| `transcript` | str | 60.3% | Speech-to-text transcript (missing ~60%) |
+| `word_count` | float64 | 37.9% | Word count of transcript |
+| `emoji_count` | float64 | 37.9% | Emoji count in transcript |
+| `question_count` | float64 | 37.9% | Question count in transcript |
+| `hashtag_count` | float64 | 37.9% | Hashtag count |
+| `speaking_rate` | float64 | 37.9% | Words per minute |
+| `gpt_summary` | str | 0 | AI-generated summary (always present) |
+| `topic` | str | 0 | Topic category |
+| `anger` | float64 | 0.5% | Emotion score |
+| `joy` | float64 | 0.5% | Emotion score |
+| `surprise` | float64 | 0.5% | Emotion score |
+| `sadness` | float64 | 0.5% | Emotion score |
+| `disgust` | float64 | 0.5% | Emotion score |
+| `fear` | float64 | 0.5% | Emotion score |
 
-**TODO (after EDA)**: full column list with types and units; description of
-`creator_daily` and `engagement_daily` and whether we use them.
+**Notable:** `transcript` is missing for 60% of videos; `gpt_summary` is always present
+and will be the primary text feature. The transcript-derived columns (word_count, etc.)
+have 37.9% null — not 60%, because some are imputed or computed from other sources.
+**This table has NO engagement metrics** — views/likes are only in `engagement_daily`.
+
+### `creator_daily` — one row per creator per day
+
+| Column | Type | Null % | Notes |
+|---|---|---|---|
+| `author_id` | str | 0 | Join key |
+| `date` | str | 0 | Snapshot date |
+| `follower_count` | float64 | 0.1% | Followers on that date |
+| `following_count` | float64 | 0.1% | Following on that date |
+| `total_favorited` | int64 | 0 | Total likes received (cumulative) |
+| `video_count` | float64 | ~0 | Total videos published (cumulative) |
+| `enterprise_verified` | str | 100% | **Entirely null — unusable** |
+
+Date range: 2024-06-24 – 2024-12-09
+
+### `engagement_daily` — one row per video per day since posting
+
+| Column | Type | Null % | Notes |
+|---|---|---|---|
+| `video_id` | str | 0 | Join key to videos |
+| `date` | str | 0 | Calendar date of measurement |
+| `days_since_post` | int64 | 0 | 0 = day of posting, max = 30 |
+| `play_count` | int64 | 0 | Cumulative plays as of this day |
+| `like_count` | int64 | 0 | Cumulative likes |
+| `comment_count` | int64 | 0 | Cumulative comments |
+| `share_count` | int64 | 0 | Cumulative shares |
+| `collect_count` | int64 | 0 | Cumulative collects/saves |
+| `download_count` | int64 | 0 | Cumulative downloads |
+| `whatsapp_share_count` | int64 | 0 | Cumulative WhatsApp shares |
+
+**No nulls anywhere.** All metrics are cumulative counts from day of posting.
+`days_since_post` ranges 0–30 (p25=7, p50=14, p75=22).
+
+Engagement metric ranges (across all rows):
+
+| Metric | Median | Max |
+|---|---|---|
+| play_count | 570 | 44,442,900 |
+| like_count | 42 | 3,044,931 |
+| comment_count | 3 | 67,276 |
+| share_count | 0 | 991,356 |
+| collect_count | 2 | 242,201 |
+| download_count | 0 | 42,972 |
+| whatsapp_share_count | 0 | 14,159 |
+
+## Join keys and integrity
+
+| Join | Key | Coverage |
+|---|---|---|
+| videos ↔ engagement_daily | `video_id` | **100%** — every video has engagement records; every engagement record has a matching video |
+| videos ↔ creator_daily | `author_id` | **100%** — every author in videos has daily creator stats and vice versa |
+
+The three tables form a clean star schema: no orphan rows.
 
 ## `data/raw/` vs. `data/interim/` vs. `data/processed/`
 
-- `data/raw/videos.parquet` — the dataset exactly as downloaded from Hugging Face.
-- `data/interim/` — the dataset after cleaning and after filtering out creators with
-  too few videos (`min_videos_per_creator` in `config/default.yaml`).
+- `data/raw/*.parquet` — the tables exactly as downloaded from Hugging Face.
+- `data/interim/` — after cleaning and filtering out creators with too few videos
+  (`min_videos_per_creator` in `config/default.yaml`).
 - `data/processed/` — model-ready features produced by `src/creator_analytics/features.py`.
 
 None of these files are committed to git; only this README and `data/raw/CHECKSUMS.txt` are.
@@ -75,18 +154,50 @@ None of these files are committed to git; only this README and `data/raw/CHECKSU
 ## How to get it
 
 ```bash
-python scripts/download_data.py
+python scripts/download_data.py          # all three tables
+python scripts/download_data.py --table videos   # one table only
 ```
 
-This downloads the dataset from Hugging Face into `data/raw/videos.parquet` and writes
-its sha256 to `data/raw/CHECKSUMS.txt`. Running it again does nothing if the checksum
-already matches; use `--force` to re-download. The dataset id, subset and split are
-set in the `data` section of `config/default.yaml`.
+This downloads all three subsets from Hugging Face into `data/raw/` and writes sha256
+checksums to `data/raw/CHECKSUMS.txt`. Running it again is a no-op if checksums already
+match; use `--force` to re-download.
+
+## Distribution of videos across creators
+
+| | Value |
+|---|---|
+| Total creators (videos table) | 1,872 |
+| Min videos per creator | 5 |
+| Median videos per creator | 69 |
+| Max videos per creator | 2,218 |
+
+Creators and videos remaining at each min_videos_per_creator threshold:
+
+| Threshold | Creators | Videos |
+|---|---|---|
+| ≥ 10 | 1,802 | 209,051 |
+| ≥ 20 | 1,629 | 206,519 |
+| ≥ 30 | 1,439 | 201,832 |
+| ≥ 50 | 1,143 | 190,260 |
+
+**Note**: the actual threshold to use is a project decision, not fixed here.
+
+## Coverage of days_since_post in engagement_daily
+
+| Day threshold | Videos with data | Coverage |
+|---|---|---|
+| ≥ 7 | 209,543 | 100% |
+| ≥ 14 | 209,543 | 100% |
+| ≥ 30 | 73,940 | 35.3% |
+
+Every video has at least one record at or after day 7 and day 14.
+Only 35.3% of videos have a record at day 30 (likely because they were posted too recently
+relative to the data collection window ending on 2024-12-09).
 
 ## Splits
 
 - Creators with fewer than `min_videos_per_creator` videos are removed first
-  (default 30, final value to be chosen after EDA).
+  (threshold to be chosen by the team; see distribution table above).
 - Then an 80/20 train/test split, **stratified by `author_id`**, with `seed: 42`
   (`config/default.yaml`), computed at runtime in
   `creator_analytics.data.train_test_split_by_creator`.
@@ -94,12 +205,6 @@ set in the `data` section of `config/default.yaml`.
 Why stratify by creator: the project compares per-creator models with one global
 model. Stratifying guarantees that every creator has videos in both train and test, so
 both approaches are evaluated on exactly the same videos.
-
-## Distribution of videos across creators
-
-**TODO (after EDA)**: number of unique creators, videos per creator (min / median /
-max, histogram), and how many creators remain at different values of
-`min_videos_per_creator`.
 
 ## Personal data
 
@@ -112,24 +217,22 @@ by real people:
 - In reports, slides and the demo we refer to creators by anonymized labels (e.g.
   "Creator A"), not by their IDs, and we do not quote transcripts at length.
 
-## Scraping
-
-Not applicable to us — we did not collect this data; we use the published dataset.
-**TODO**: describe how the dataset authors collected it, based on the dataset page.
-
 ## Known limitations and biases
 
 - **Uneven distribution across creators** (expected): many creators may have too few
   videos for a per-creator model; filtering them out biases the study towards more
   active creators.
+- **transcript missing for 60%** of videos; text-based features will rely primarily
+  on `gpt_summary`, which is always present.
+- **enterprise_verified entirely null** — this column in creator_daily cannot be used.
+- **day-30 coverage is only 35.3%**: targets that require a day-30 reading exclude ~65%
+  of videos; day-7 and day-14 targets have full coverage.
+- **Highly skewed metrics**: median play_count is 570, max is 44 M — log-scaling will be
+  essential before modelling.
 - **AI-extracted features may be noisy**: transcripts, summaries, emotion scores and
   topics were generated automatically and may contain errors.
-- **Proxy features**: `music_selected_from` is only an approximation of the editing
-  template; we do not analyze the video itself.
 - **No retention data**: the exact moment viewers stop watching is private and not
   available, so it is out of scope.
-- **TODO (after EDA)**: missing values, outliers in engagement metrics, the time period
-  covered, and when engagement was measured relative to posting.
 
 ## Ethical risks
 
@@ -143,5 +246,5 @@ Not applicable to us — we did not collect this data; we use the published data
 ## Version and checksum
 
 `data/raw/CHECKSUMS.txt` (committed to git, unlike the data itself) records the sha256
-of the exact file this project was built and tested against. Regenerate and compare
+of the exact files this project was built and tested against. Regenerate and compare
 with `python scripts/download_data.py`.
