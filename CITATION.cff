@@ -11,7 +11,7 @@ version: 0.1.0
 date-released: "2026-10-17"
 type: software
 license: MIT
-repository-code: "https://github.com/Shopska/Personalized_anaysis_of_social_media"
+repository-code: "https://github.com/Shopska/Personalized_analysis_of_social_media"
 keywords:
   - explainable machine learning
   - SHAP

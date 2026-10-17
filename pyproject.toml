@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "creator-analytics"
 version = "0.1.0"
-description = "Wine cultivar classification example project (course template)"
+description = "Personalized explainable-ML analysis of TikTok creator performance"
 requires-python = ">=3.11"
 readme = "README.md"
 license = { text = "MIT" }
