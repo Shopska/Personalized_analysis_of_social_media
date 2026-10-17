@@ -4,15 +4,15 @@ same seed must produce bit-identical metrics, not just "similar" ones.
 
 from __future__ import annotations
 
-from wine_origin.config import load_config
-from wine_origin.data import (
+from creator_analytics.config import load_config
+from creator_analytics.data import (
     materialize_raw_csv,
     split_features_target,
     train_test_split_stratified,
 )
-from wine_origin.evaluate import compute_metrics
-from wine_origin.models import build_active_model
-from wine_origin.utils import set_seed
+from creator_analytics.evaluate import compute_metrics
+from creator_analytics.models import build_active_model
+from creator_analytics.utils import set_seed
 
 
 def _run_once(tmp_path, config):

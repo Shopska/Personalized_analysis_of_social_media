@@ -2,7 +2,7 @@
 """Run the full model comparison: baseline + every candidate model, then report.
 
 Run directly with `python scripts/run_experiment.py`. It's deliberately separate from
-`python -m wine_origin evaluate` (a single model's numbers, used by `make reproduce`
+`python -m creator_analytics evaluate` (a single model's numbers, used by `make reproduce`
 for the quick-start check) — this script is the one that produces the comparison
 table in README.md and the experiment log in results/experiments.md, including a
 model we tried and rejected (see the SVM entry below): the negative result is
@@ -20,15 +20,15 @@ from pathlib import Path
 
 from sklearn.svm import SVC
 
-from wine_origin import evaluate as evaluate_mod
-from wine_origin import models as models_mod
-from wine_origin.config import load_config
-from wine_origin.data import (
+from creator_analytics import evaluate as evaluate_mod
+from creator_analytics import models as models_mod
+from creator_analytics.config import load_config
+from creator_analytics.data import (
     load_raw_csv,
     split_features_target,
     train_test_split_stratified,
 )
-from wine_origin.utils import env_info, set_seed
+from creator_analytics.utils import env_info, set_seed
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ def render_experiments_log(results: dict, generated_at: str, config: dict) -> st
         f"## Selected model: `{config['model']['active']}`",
         "",
         "Set via `model.active` in `config/default.yaml`; this is what "
-        "`python -m wine_origin train` / `predict` and the Streamlit app use.",
+        "`python -m creator_analytics train` / `predict` and the Streamlit app use.",
         "",
     ]
     return "\n".join(lines)

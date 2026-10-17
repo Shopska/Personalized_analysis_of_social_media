@@ -24,17 +24,17 @@ from huggingface_hub import HfApi
 HfApi().upload_file(
     path_or_fileobj="models/model.joblib",
     path_in_repo="model.joblib",
-    repo_id="<your-username>/wine-origin-classifier",
+    repo_id="<your-username>/creator-analytics-classifier",
     repo_type="model",
     token=os.environ["HF_TOKEN"],  # see .env.example
 )
 ```
 
-Then set `huggingface.repo_id` in `config/default.yaml` to `"<your-username>/wine-origin-classifier"`.
+Then set `huggingface.repo_id` in `config/default.yaml` to `"<your-username>/creator-analytics-classifier"`.
 
 ## How the code loads it
 
-`wine_origin.models.load_model()` tries the local path first, and only falls back to
+`creator_analytics.models.load_model()` tries the local path first, and only falls back to
 the Hub if nothing is there locally:
 
 ```python
@@ -44,11 +44,11 @@ def load_model(path, hf_repo_id=""):
     if hf_repo_id:
         from huggingface_hub import hf_hub_download
         return joblib.load(hf_hub_download(repo_id=hf_repo_id, filename="model.joblib"))
-    raise FileNotFoundError(...)  # tells the caller to run `python -m wine_origin train`
+    raise FileNotFoundError(...)  # tells the caller to run `python -m creator_analytics train`
 ```
 
-This is what lets `python -m wine_origin predict` and the Streamlit app work on a
-clean machine that has never run `python -m wine_origin train`, as long as
+This is what lets `python -m creator_analytics predict` and the Streamlit app work on a
+clean machine that has never run `python -m creator_analytics train`, as long as
 `huggingface.repo_id` is configured — no manual download step required.
 
 ## Model card checklist (fill in on the Hub, not just here)

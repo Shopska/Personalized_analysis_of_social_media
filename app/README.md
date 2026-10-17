@@ -16,7 +16,7 @@ CLI commands.
 
 ```bash
 source .venv/bin/activate   # if you haven't already (created by `make setup`)
-python -m wine_origin train # only needed once, if models/model.joblib doesn't exist yet
+python -m creator_analytics train # only needed once, if models/model.joblib doesn't exist yet
 streamlit run app/streamlit_app.py
 ```
 
@@ -32,4 +32,4 @@ Opens at `http://localhost:8501`. Stop it with `Ctrl+C`.
 - `@st.cache_resource` on model loading, so the (small) model is loaded once per
   session instead of on every interaction — this matters more as models get bigger
 - a friendly `st.error(...)` message (not a stack trace) if no trained model is found,
-  telling you to run `python -m wine_origin train` first
+  telling you to run `python -m creator_analytics train` first

@@ -1,4 +1,4 @@
-"""Single entry point for this project: ``python -m wine_origin <command>``.
+"""Single entry point for this project: ``python -m creator_analytics <command>``.
 
 One CLI with subcommands (rather than three separate scripts) means there's one place
 that knows how to load config, set the seed, and set up logging — every command gets
@@ -14,15 +14,15 @@ from pathlib import Path
 
 import pandas as pd
 
-from wine_origin import evaluate as evaluate_mod
-from wine_origin import models as models_mod
-from wine_origin.config import load_config
-from wine_origin.data import (
+from creator_analytics import evaluate as evaluate_mod
+from creator_analytics import models as models_mod
+from creator_analytics.config import load_config
+from creator_analytics.data import (
     load_raw_csv,
     split_features_target,
     train_test_split_stratified,
 )
-from wine_origin.utils import env_info, set_seed, setup_logging
+from creator_analytics.utils import env_info, set_seed, setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m wine_origin",
+        prog="python -m creator_analytics",
         description="Train, evaluate, and run predictions for the wine cultivar classifier.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

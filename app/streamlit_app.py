@@ -14,9 +14,9 @@ import random
 import pandas as pd
 import streamlit as st
 
-from wine_origin.config import load_config
-from wine_origin.data import load_raw_csv, train_test_split_stratified
-from wine_origin.models import load_model
+from creator_analytics.config import load_config
+from creator_analytics.data import load_raw_csv, train_test_split_stratified
+from creator_analytics.models import load_model
 
 CLASS_NAMES = ["class_0 (cultivar 1)", "class_1 (cultivar 2)", "class_2 (cultivar 3)"]
 
@@ -74,7 +74,7 @@ def main() -> None:
     except FileNotFoundError:
         st.error(
             "No trained model found at `models/model.joblib`. Run "
-            "`python -m wine_origin train` first, then reload this page."
+            "`python -m creator_analytics train` first, then reload this page."
         )
         st.stop()
 

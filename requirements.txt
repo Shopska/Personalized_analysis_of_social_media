@@ -9,3 +9,11 @@ joblib==1.5.3
 PyYAML==6.0.3
 streamlit==1.61.1
 huggingface_hub==1.27.0
+
+# Data loading from Hugging Face (+ Parquet support)
+datasets==5.0.1
+pyarrow==24.0.0
+
+# Models and explainability
+xgboost==3.4.1
+shap==0.52.0

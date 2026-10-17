@@ -1,4 +1,4 @@
-from wine_origin.cli import main
+from creator_analytics.cli import main
 
 if __name__ == "__main__":
     main()

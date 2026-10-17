@@ -1,11 +1,9 @@
 #!/usr/bin/env python
-"""Materialize the wine dataset to data/raw/wine.csv and record its checksum.
+"""Download the TikTok engagement dataset to data/raw/ and record its checksum.
 
-Idempotent: if the CSV already exists and its sha256 matches what's on record in
-data/raw/CHECKSUMS.txt, nothing is re-downloaded or re-written. That file IS committed
-to git (unlike the data itself) — it's how reproducibility gets checked without the
-raw data ever being in version control: anyone can regenerate the CSV and confirm the
-checksum matches.
+Idempotent: if the file already exists and its sha256 matches what's on record in
+data/raw/CHECKSUMS.txt, nothing is re-downloaded. CHECKSUMS.txt IS committed to git
+(unlike the data itself): it lets anyone check they got exactly the same data.
 """
 
 from __future__ import annotations
@@ -15,16 +13,18 @@ import hashlib
 import logging
 from pathlib import Path
 
-from wine_origin.data import materialize_raw_csv
+from creator_analytics.config import load_config
+from creator_analytics.data import materialize_raw_data
 
 logger = logging.getLogger(__name__)
 
-RAW_CSV = Path("data/raw/wine.csv")
-CHECKSUMS_FILE = Path("data/raw/CHECKSUMS.txt")
-
 
 def sha256_of(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):  # 1 MB at a time
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def read_recorded_checksum(checksums_file: Path, filename: str) -> str | None:
@@ -52,23 +52,35 @@ def write_checksum(checksums_file: Path, filename: str, digest: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", default="config/default.yaml")
     parser.add_argument(
-        "--force", action="store_true", help="Re-materialize even if checksums already match"
+        "--force", action="store_true", help="Re-download even if checksums already match"
     )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    recorded = read_recorded_checksum(CHECKSUMS_FILE, RAW_CSV.name)
-    if not args.force and RAW_CSV.exists() and recorded is not None:
-        if sha256_of(RAW_CSV) == recorded:
-            logger.info("%s already up to date (sha256 matches CHECKSUMS.txt), skipping", RAW_CSV)
-            return
-        logger.warning("%s exists but checksum doesn't match — re-materializing", RAW_CSV)
+    config = load_config(args.config)
+    raw_path = Path(config["paths"]["raw_data"])
+    checksums_file = Path(config["paths"]["checksums"])
+    data_cfg = config["data"]
 
-    materialize_raw_csv(RAW_CSV)
-    digest = sha256_of(RAW_CSV)
-    write_checksum(CHECKSUMS_FILE, RAW_CSV.name, digest)
-    logger.info("Wrote %s (sha256 %s)", RAW_CSV, digest)
+    recorded = read_recorded_checksum(checksums_file, raw_path.name)
+    if not args.force and raw_path.exists() and recorded is not None:
+        if sha256_of(raw_path) == recorded:
+            logger.info("%s already up to date (sha256 matches CHECKSUMS.txt), skipping", raw_path)
+            return
+        logger.warning("%s exists but checksum doesn't match — re-downloading", raw_path)
+
+    df = materialize_raw_data(
+        raw_path,
+        hf_repo=data_cfg["hf_repo"],
+        hf_config=data_cfg.get("hf_config"),
+        hf_split=data_cfg.get("hf_split", "train"),
+    )
+    digest = sha256_of(raw_path)
+    write_checksum(checksums_file, raw_path.name, digest)
+    logger.info("Wrote %s: %d rows, %d columns (sha256 %s)", raw_path, *df.shape, digest)
+    logger.info("Columns: %s", ", ".join(df.columns))
 
 
 if __name__ == "__main__":

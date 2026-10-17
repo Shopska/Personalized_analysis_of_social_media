@@ -2,7 +2,7 @@
 
 Naming: `NN-kebab-case-name.ipynb`, numbered in the order you'd actually read them (`NN` is two digits: `01`, `02`, ...).
 
-1. **A notebook is a draft and a narrative, not the source of truth.** Working code that's used more than once belongs in `src/wine_origin/`, and the notebook imports it — the rule of thumb is: if a function is needed twice, it belongs in `src/`, not copy-pasted between notebooks.
+1. **A notebook is a draft and a narrative, not the source of truth.** Working code that's used more than once belongs in `src/creator_analytics/`, and the notebook imports it — the rule of thumb is: if a function is needed twice, it belongs in `src/`, not copy-pasted between notebooks.
 2. **Every notebook opens with a markdown cell**: Goal, Input, Conclusion. The Conclusion is written **after** the analysis, once you know what the results actually say — not drafted in advance and left unchanged.
 3. **`Restart & Run All` before committing.** A notebook that doesn't run cleanly top to bottom doesn't get committed — a notebook full of out-of-order cell numbers is a common source of "works on my machine, mysteriously not on yours."
 4. **Outputs are committed.** This course's convention is to keep cell outputs in the `.ipynb` file (not strip them), so plots and tables are visible directly on GitHub without anyone having to re-run the notebook first. The tradeoff is merge conflicts (see rule 5) and file size — keep figures reasonably sized, don't `df.head(10000)` into a cell.

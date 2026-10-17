@@ -1,72 +1,76 @@
 # data/ — data card
 
-> **Why this matters:** deciding a dataset's license and provenance *before* you start
-> building is a lot cheaper than discovering after your final report is written that
-> you're not actually allowed to redistribute it, or that you can't say where it came
-> from. Fill this file in as one of the first things you do, not the last.
+> Status: partially filled before EDA. Sections marked **TODO (after EDA)** will be
+> completed once the dataset is downloaded and explored in `notebooks/01-eda.ipynb`.
 
 ## Name and source
 
-**UCI Wine Recognition Data**, accessed via `sklearn.datasets.load_wine`. Originally
-donated to the UCI Machine Learning Repository in 1991 by Forina, M. et al.,
-Institute of Pharmaceutical and Food Analysis and Technologies (Genoa, Italy). Results
-of a chemical analysis of wines grown in the same region of Italy, from three
-different cultivars.
+**TikTok Video Engagement 200k** (`lingbow/tiktok-video-engagement-200k`), hosted on
+Hugging Face Datasets.
 
-- UCI page: <https://archive.ics.uci.edu/dataset/109/wine>
-- Bundled directly in scikit-learn — no external download needed, see "How to get it" below.
+- Dataset page: <https://huggingface.co/datasets/lingbow/tiktok-video-engagement-200k>
+- Approximately 210,000 TikTok videos, each linked to its creator via `author_id`,
+  which is what makes per-creator modeling possible.
+- Besides the main video-level table, the dataset includes two auxiliary tables:
+  `creator_daily` and `engagement_daily`.
+- Content features were pre-extracted by the dataset authors using AI tools
+  (transcripts, generated summaries, emotion scores, topic labels). We use these
+  as-is instead of running our own video analysis.
 
 ## License and terms of use
 
-No explicit license file accompanies the original 1991 UCI submission (it predates
-standard dataset-licensing practice). scikit-learn redistributes it as one of its
-built-in "toy datasets" for examples and teaching. Treat it as free to use for
-research and educational purposes; if you use it in a report or publication, cite
-the original source (see below) rather than just "scikit-learn". There are no known
-commercial-use restrictions, but because there's no formal license grant, avoid
-presenting it as your own collected data in anything beyond a course project context.
+**CC-BY-NC-4.0** (Creative Commons Attribution-NonCommercial 4.0).
 
-**Citation**, if you need one:
+What this means for this project:
 
-> Forina, M. et al. (1991). *PARVUS — An Extendible Package for Data Exploration,
-> Classification and Correlation*. Institute of Pharmaceutical and Food Analysis and
-> Technologies, Via Brigata Salerno, 16147 Genoa, Italy.
+- **Allowed**: use for non-commercial purposes, such as this university course project,
+  as long as the source is credited.
+- **Not allowed**: any commercial use of the data, or of anything derived from it.
+- **Models and results inherit this restriction.** Trained models and per-creator
+  insights are derived from NC data, so they are also non-commercial only — even
+  though the code in this repository is MIT-licensed (see the root `LICENSE`).
+- We do **not** redistribute the data: it is downloaded on demand by
+  `scripts/download_data.py` and never committed to git.
+
+**Citation**: TODO — check the dataset page for a preferred citation; until then, cite
+the dataset by its Hugging Face id and URL above.
 
 ## Size and format
 
-- 178 samples, 13 numeric features, 3 classes (cultivars)
-- One CSV file, `data/raw/wine.csv`, ~11 KB
-- No train/test files on disk — the split is generated at runtime from a fixed seed (see "Splits" below), so there's only ever one raw file to keep in sync
+- ~210,000 rows (one row per video) in the main table
+- Stored locally as one Parquet file: `data/raw/videos.parquet`. Parquet rather than CSV
+  because of the long free-text columns (`transcript`, `gpt_summary`) and the row count.
+- File size on disk: **TODO (after download)**
+- No train/test files on disk — the split is computed at runtime from a fixed seed
+  (see "Splits" below).
 
 ## Schema
 
-| Column | Type | Description | Units |
+Columns we plan to use, based on the dataset description. Types, exact column names
+and the full column list will be confirmed after download (`download_data.py` prints
+every column name).
+
+| Column | Type | Description | Used as |
 |---|---|---|---|
-| `alcohol` | float | Alcohol content | % vol |
-| `malic_acid` | float | Malic acid | g/L |
-| `ash` | float | Ash | g/L |
-| `alcalinity_of_ash` | float | Alkalinity of ash | — |
-| `magnesium` | float | Magnesium | mg/L |
-| `total_phenols` | float | Total phenols | — |
-| `flavanoids` | float | Flavanoids | — |
-| `nonflavanoid_phenols` | float | Non-flavanoid phenols | — |
-| `proanthocyanins` | float | Proanthocyanins | g/L |
-| `color_intensity` | float | Color intensity | — |
-| `hue` | float | Hue | — |
-| `od280/od315_of_diluted_wines` | float | OD280/OD315 of diluted wines (protein content proxy) | — |
-| `proline` | float | Proline | mg/L |
-| `target` | int | Cultivar: `0`, `1`, or `2` | — |
+| `author_id` | TODO | Creator identifier | Grouping key for per-creator models and for the split |
+| `transcript` | text | Speech transcript of the video | Source for text features |
+| `gpt_summary` | text | AI-generated summary of the video | Source for text features |
+| emotion scores | numeric | Emotional tone of the video (exact columns TODO) | Features |
+| `topic` | categorical | Topic category of the video | Feature |
+| `music_selected_from` | categorical | Where the music was selected from | Proxy for the editing template type |
+| performance metric(s) | numeric | Views / likes / comments / shares (exact columns TODO) | Target variable — **to be chosen after EDA** |
+
+**TODO (after EDA)**: full column list with types and units; description of
+`creator_daily` and `engagement_daily` and whether we use them.
 
 ## `data/raw/` vs. `data/interim/` vs. `data/processed/`
 
-This project's pipeline is simple enough to go straight from `data/raw/wine.csv` to
-features in memory (see `src/wine_origin/features.py`) — so `data/interim/` and
-`data/processed/` are currently empty (just a `.gitkeep` each, so the folders exist
-after a fresh clone). If your project adds a real multi-step pipeline — e.g.
-cleaning/joining raw sources into an intermediate form, then engineering features from
-that — `data/interim/` is where the intermediate, not-yet-final form goes, and
-`data/processed/` is where the model-ready output goes. Same rule as `data/raw/`:
-never commit the files themselves, only document what's in them here.
+- `data/raw/videos.parquet` — the dataset exactly as downloaded from Hugging Face.
+- `data/interim/` — the dataset after cleaning and after filtering out creators with
+  too few videos (`min_videos_per_creator` in `config/default.yaml`).
+- `data/processed/` — model-ready features produced by `src/creator_analytics/features.py`.
+
+None of these files are committed to git; only this README and `data/raw/CHECKSUMS.txt` are.
 
 ## How to get it
 
@@ -74,72 +78,70 @@ never commit the files themselves, only document what's in them here.
 python scripts/download_data.py
 ```
 
-This materializes `sklearn`'s built-in dataset to
-`data/raw/wine.csv` and writes its sha256 to `data/raw/CHECKSUMS.txt`. It's idempotent
-— if the checksum already matches, it does nothing on a re-run.
+This downloads the dataset from Hugging Face into `data/raw/videos.parquet` and writes
+its sha256 to `data/raw/CHECKSUMS.txt`. Running it again does nothing if the checksum
+already matches; use `--force` to re-download. The dataset id, subset and split are
+set in the `data` section of `config/default.yaml`.
 
 ## Splits
 
-Stratified 80/20 train/test split, `random_state=42` (see `config/default.yaml`'s
-`seed` and `split` keys), computed at runtime in `wine_origin.data.train_test_split_stratified`
-— not stored as separate files, so there's exactly one raw file to keep an eye on. No
-overlap between train and test is verified by `tests/test_data.py`.
+- Creators with fewer than `min_videos_per_creator` videos are removed first
+  (default 30, final value to be chosen after EDA).
+- Then an 80/20 train/test split, **stratified by `author_id`**, with `seed: 42`
+  (`config/default.yaml`), computed at runtime in
+  `creator_analytics.data.train_test_split_by_creator`.
+
+Why stratify by creator: the project compares per-creator models with one global
+model. Stratifying guarantees that every creator has videos in both train and test, so
+both approaches are evaluated on exactly the same videos.
+
+## Distribution of videos across creators
+
+**TODO (after EDA)**: number of unique creators, videos per creator (min / median /
+max, histogram), and how many creators remain at different values of
+`min_videos_per_creator`.
 
 ## Personal data
 
-None. This is chemical measurement data with no connection to individuals.
+The dataset consists of publicly posted TikTok videos, but it is still content created
+by real people:
+
+- `author_id` identifies a creator; transcripts may contain names or other personal
+  details spoken in the videos.
+- We do not try to link `author_id` to real accounts or identities.
+- In reports, slides and the demo we refer to creators by anonymized labels (e.g.
+  "Creator A"), not by their IDs, and we do not quote transcripts at length.
 
 ## Scraping
 
-Not applicable — this dataset was not scraped; it comes from a 1991 laboratory
-chemical analysis, redistributed via scikit-learn.
+Not applicable to us — we did not collect this data; we use the published dataset.
+**TODO**: describe how the dataset authors collected it, based on the dataset page.
 
 ## Known limitations and biases
 
-- Small (178 samples) — expect wide confidence intervals on any metric, and treat
-  single-run numbers with caution (see the "why one seed isn't enough" note in the
-  root README).
-- Mild class imbalance: 59 / 71 / 48 samples across the three cultivars.
-- All samples are from one region of Italy — a model trained on this data has not
-  seen wines from other regions, and nothing in the data or the model should be
-  assumed to generalize beyond similar cultivars.
+- **Uneven distribution across creators** (expected): many creators may have too few
+  videos for a per-creator model; filtering them out biases the study towards more
+  active creators.
+- **AI-extracted features may be noisy**: transcripts, summaries, emotion scores and
+  topics were generated automatically and may contain errors.
+- **Proxy features**: `music_selected_from` is only an approximation of the editing
+  template; we do not analyze the video itself.
+- **No retention data**: the exact moment viewers stop watching is private and not
+  available, so it is out of scope.
+- **TODO (after EDA)**: missing values, outliers in engagement metrics, the time period
+  covered, and when engagement was measured relative to posting.
 
 ## Ethical risks
 
-Low: this is chemical composition data with no personal, demographic, or otherwise
-sensitive information. The main risk is over-generalizing a model trained on 178
-samples from one region as if it said something universal about wine chemistry.
+- Per-creator insights could be misread as definitive advice about a real person's
+  content; we present them as model explanations with uncertainty, not as guarantees.
+- The NC license must be respected in everything derived from the data, including any
+  published model.
+- Results describe patterns in this dataset only and should not be generalized to all
+  TikTok creators or other platforms.
 
 ## Version and checksum
 
-`data/raw/CHECKSUMS.txt` (committed to git, unlike the data itself) records the
-sha256 of the exact file this project was built and tested against. Regenerate and
-compare with `python scripts/download_data.py`.
-
----
-
-## If your project's data is too large or private for this pattern
-
-The pattern above — a small dataset, materialized on demand, checksum committed
-instead of the data — doesn't fit every project. If yours doesn't:
-
-- **Large but shareable**: Git LFS, DVC + cloud storage (S3/GCS/etc.), or Hugging Face
-  Datasets are all reasonable; pick based on whether your team already uses one of them.
-- **Already hosted elsewhere**: if the data already lives on Kaggle, just document the
-  dataset URL and the `kaggle datasets download <owner>/<dataset>` command (via the
-  `kaggle` CLI) instead of re-hosting it yourself.
-- **You need a DOI** (e.g. citing a specific dataset version in a paper or proposal):
-  Zenodo — same idea as the models/README.md Hugging Face pattern, but for data.
-- **Private (can't be public at all)**: keep it out of git entirely, document exactly
-  how to request access in this file, and note that CI/graders will need a documented
-  path to get it too.
-
-> [!warning]
-> `git rm big_or_private_file.csv` does **not** remove it from git history — the file
-> is still sitting in every commit before that removal, downloadable by anyone with
-> repo access. If a data file with real access restrictions is ever committed by
-> mistake, don't just delete it in a new commit: treat it like a leaked secret (see the
-> root README's note on that) and either rewrite history properly (`git filter-repo`)
-> before anyone else pulls, or accept it needs to be revoked/rotated at the source.
-> Deciding your storage approach *before* the first commit is much cheaper than fixing
-> this after the fact.
+`data/raw/CHECKSUMS.txt` (committed to git, unlike the data itself) records the sha256
+of the exact file this project was built and tested against. Regenerate and compare
+with `python scripts/download_data.py`.
