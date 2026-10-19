@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Generate all project notebooks (01–04) from source strings.
+"""Generate all project notebooks (01–06) from source strings.
 
 Run once to (re)create the notebooks from scratch:
     python scripts/make_notebooks.py
@@ -9,6 +9,8 @@ Then execute them:
     jupyter nbconvert --to notebook --execute --inplace notebooks/02-target-selection.ipynb
     jupyter nbconvert --to notebook --execute --inplace notebooks/03-feature-engineering.ipynb
     jupyter nbconvert --to notebook --execute --inplace notebooks/04-baseline-model.ipynb
+    jupyter nbconvert --to notebook --execute --inplace notebooks/05-per-creator-models.ipynb
+    jupyter nbconvert --to notebook --execute --inplace notebooks/06-model-comparison.ipynb
 """
 
 from pathlib import Path
@@ -1797,3 +1799,571 @@ nb05 = make_nb([
 
 nbformat.write(nb05, NB_DIR / "05-per-creator-models.ipynb")
 print("Written notebooks/05-per-creator-models.ipynb")
+
+
+# ================================================================== #
+# NOTEBOOK 06: Model Comparison — Per-Creator vs Global               #
+# ================================================================== #
+
+NB06_GOAL = """\
+# 06 — Model Comparison: Per-Creator vs Global
+
+**Goal** – Compare the per-creator and global models on the same held-out test
+videos.  All analysis uses *saved prediction parquets only* — no retraining.
+
+Analyses:
+1. Overall metrics on all test videos.
+2. Paired per-creator comparison: Wilcoxon signed-rank test + bootstrap 95% CI.
+3. Moderation: does personalisation help more for large creators? High-variance targets?
+
+> **Note on noise**: median creator has only 19 test videos; per-creator RMSE
+> estimates are therefore noisy.  We report CIs throughout and avoid strong
+> claims about individual creators.
+"""
+
+NB06_LOAD = """\
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+from pathlib import Path
+from scipy.stats import spearmanr, wilcoxon
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+
+# ── sanity check ────────────────────────────────────────────────────
+PRED_GLOBAL = Path("results/predictions_global.parquet")
+PRED_PC     = Path("results/predictions_per_creator.parquet")
+PC_META     = Path("results/per_creator_metrics_percreator.parquet")
+
+if not PRED_GLOBAL.exists():
+    raise FileNotFoundError(
+        f"{PRED_GLOBAL} not found. "
+        "Run notebooks/04-baseline-model.ipynb first."
+    )
+
+pred_g  = pd.read_parquet(PRED_GLOBAL)   # y_true, y_pred, author_id
+pred_pc = pd.read_parquet(PRED_PC)       # y_true, y_pred, author_id
+meta_pc = pd.read_parquet(PC_META)       # author_id, n_test, rmse, n_train, …
+
+print(f"Global predictions :  {len(pred_g):,} rows,  "
+      f"NaN y_pred={pred_g.y_pred.isna().sum()}")
+print(f"Per-creator preds  :  {len(pred_pc):,} rows,  "
+      f"NaN y_pred={pred_pc.y_pred.isna().sum()}")
+
+# align on common creators + verify y_true matches
+common = set(pred_g.author_id.unique()) & set(pred_pc.author_id.unique())
+print(f"Common creators    :  {len(common)}")
+pred_g  = pred_g[pred_g.author_id.isin(common)].reset_index(drop=True)
+pred_pc = pred_pc[pred_pc.author_id.isin(common)].reset_index(drop=True)
+
+# merge to compare y_true column (must be identical)
+merged = pred_g.rename(columns={"y_pred":"y_pred_g"}).merge(
+    pred_pc[["author_id", "y_pred"]].rename(columns={"y_pred":"y_pred_pc"}),
+    left_index=True, right_index=True
+)
+# verify y_true alignment by recomputing from both parquets
+yt_g  = pred_g.sort_values(["author_id","y_true"])["y_true"].values
+yt_pc = pred_pc.sort_values(["author_id","y_true"])["y_true"].values
+assert np.allclose(yt_g, yt_pc, atol=1e-9), "y_true mismatch between prediction files!"
+print("y_true alignment   :  OK")
+"""
+
+NB06_HELPERS = """\
+# ── helper functions ────────────────────────────────────────────────
+
+def _rmse(yt, yp):
+    return float(np.sqrt(mean_squared_error(yt, yp)))
+
+def compute_global_metrics(df):
+    yt, yp = df.y_true.values, df.y_pred.values
+    rho, _ = spearmanr(yt, yp)
+    return {"rmse": _rmse(yt, yp),
+            "mae":  float(mean_absolute_error(yt, yp)),
+            "r2":   float(r2_score(yt, yp)),
+            "spearman": float(rho),
+            "n":    len(yt)}
+
+def compute_per_creator_metrics(df):
+    rows = []
+    for author, g in df.groupby("author_id"):
+        yt, yp = g.y_true.values, g.y_pred.values
+        n = len(yt)
+        rho = float(spearmanr(yt, yp).statistic) if n >= 2 else float("nan")
+        rows.append({"author_id": author, "n_test": n,
+                     "rmse": _rmse(yt, yp),
+                     "spearman": rho})
+    return pd.DataFrame(rows)
+
+def bootstrap_ci(values, stat_fn=np.mean, n_boot=2000, seed=42):
+    rng = np.random.RandomState(seed)
+    boots = [stat_fn(rng.choice(values, size=len(values), replace=True))
+             for _ in range(n_boot)]
+    lo, hi = np.percentile(boots, [2.5, 97.5])
+    return float(lo), float(hi)
+
+print("Helper functions defined.")
+"""
+
+NB06_TRIVIAL = """\
+# ── trivial baselines (computed from y_true only) ───────────────────
+
+# predict_0: always predict 0
+# predict_creator_mean: per-creator mean of y_true in the *same test set*
+# (conservative — overestimates creator-mean baseline skill since we use test mean)
+# For a fair estimate, we would need train means; for comparison we note this caveat.
+
+y_true_all = pred_g["y_true"].values
+
+# predict_0
+pred_zero = np.zeros(len(y_true_all))
+
+# predict_creator_test_mean (uses test mean — slight overestimate of a real baseline)
+test_means = pred_g.groupby("author_id")["y_true"].transform("mean")
+pred_creator_mean_test = test_means.values
+
+m_zero = {"name": "predict_0",
+          "rmse": _rmse(y_true_all, pred_zero),
+          "mae":  float(mean_absolute_error(y_true_all, pred_zero)),
+          "r2":   float(r2_score(y_true_all, pred_zero)),
+          "spearman": float("nan")}
+
+m_cmean = {"name": "predict_creator_mean (test)",
+           "rmse": _rmse(y_true_all, pred_creator_mean_test),
+           "mae":  float(mean_absolute_error(y_true_all, pred_creator_mean_test)),
+           "r2":   float(r2_score(y_true_all, pred_creator_mean_test)),
+           "spearman": float("nan")}
+
+print(f"predict_0            RMSE={m_zero['rmse']:.4f}  MAE={m_zero['mae']:.4f}  R²={m_zero['r2']:.4f}")
+print(f"predict_creator_mean RMSE={m_cmean['rmse']:.4f}  MAE={m_cmean['mae']:.4f}  R²={m_cmean['r2']:.4f}")
+print("(creator-mean baseline uses test mean — slightly optimistic)")
+"""
+
+NB06_OVERALL_MD = """\
+## 1. Overall Metrics
+"""
+
+NB06_OVERALL = """\
+m_global = compute_global_metrics(pred_g.rename(columns={"y_pred":"y_pred"}).assign(y_pred=pred_g.y_pred))
+m_pc     = compute_global_metrics(pred_pc.rename(columns={"y_pred":"y_pred"}).assign(y_pred=pred_pc.y_pred))
+
+overall = pd.DataFrame([
+    {"model": "predict_0",                 **{k: m_zero[k] for k in ["rmse","mae","r2","spearman"]}},
+    {"model": "predict_creator_mean(test)",**{k: m_cmean[k] for k in ["rmse","mae","r2","spearman"]}},
+    {"model": "global XGB",               **{k: m_global[k] for k in ["rmse","mae","r2","spearman"]}},
+    {"model": "per-creator RF",           **{k: m_pc[k] for k in ["rmse","mae","r2","spearman"]}},
+]).set_index("model")
+
+display(overall.style
+        .format({"rmse":"{:.4f}","mae":"{:.4f}","r2":"{:.4f}","spearman":"{:.4f}"}, na_rep="—")
+        .highlight_min(subset=["rmse","mae"], color="#d4f1c2")
+        .highlight_max(subset=["r2","spearman"], color="#d4f1c2"))
+
+rmse_improvement = (m_global["rmse"] - m_pc["rmse"]) / m_global["rmse"] * 100
+print(f"\\nPer-creator vs global: RMSE improvement {rmse_improvement:+.1f}%")
+"""
+
+NB06_PAIRED_MD = """\
+## 2. Paired Per-Creator Comparison
+
+We compute per-creator RMSE and Spearman for **each model** on each creator's
+test videos, then take the **difference** (global − per-creator).  A positive
+difference means the per-creator model is better for that creator.
+
+Each creator appears once in each model → naturally paired observations.
+"""
+
+NB06_PAIRED = """\
+pc_g  = compute_per_creator_metrics(pred_g)
+pc_pc = compute_per_creator_metrics(pred_pc)
+
+cmp = pc_g.merge(pc_pc, on="author_id", suffixes=("_g","_pc"))
+cmp = cmp.merge(meta_pc[["author_id","n_train","size_bin","worse_than_zero"]], on="author_id", how="left")
+cmp["target_std"] = pred_g.groupby("author_id")["y_true"].std().reindex(cmp["author_id"]).values
+
+# positive  = per-creator wins
+cmp["rmse_diff"]     = cmp["rmse_g"]     - cmp["rmse_pc"]
+cmp["spearman_diff"] = cmp["spearman_pc"] - cmp["spearman_g"]
+
+n_total = len(cmp)
+n_pc_wins_rmse     = (cmp["rmse_diff"] > 0).sum()
+n_pc_wins_spearman = (cmp["spearman_diff"] > 0).sum()
+
+print(f"Total creators in comparison: {n_total}")
+print(f"Per-creator wins on RMSE    : {n_pc_wins_rmse} / {n_total}  ({100*n_pc_wins_rmse/n_total:.1f}%)")
+print(f"Per-creator wins on Spearman: {n_pc_wins_spearman} / {n_total}  ({100*n_pc_wins_spearman/n_total:.1f}%)")
+print(f"\\nMean RMSE diff (global - pc): {cmp.rmse_diff.mean():.4f}")
+print(f"Median RMSE diff            : {cmp.rmse_diff.median():.4f}")
+ci_lo, ci_hi = bootstrap_ci(cmp["rmse_diff"].values)
+print(f"Bootstrap 95% CI (2 000 resamples, creator-level): [{ci_lo:.4f}, {ci_hi:.4f}]")
+"""
+
+NB06_WILCOXON_MD = """\
+## 3. Wilcoxon Signed-Rank Test
+
+**Why a paired test?**  Each creator contributes *one RMSE estimate per model*
+(not an independent sample per model).  The paired design removes between-creator
+variance and focuses on the within-creator improvement.
+
+**Why Wilcoxon and not a paired t-test?**  RMSE differences across creators are
+unlikely to follow a normal distribution — the distribution is bounded below,
+right-skewed, and contains a few creators with very high RMSE.  The Wilcoxon
+signed-rank test makes no normality assumption; it tests whether the distribution
+of signed differences is symmetric around zero.
+
+$H_0$: the median RMSE difference (global − per-creator) is zero.
+$H_1$: the median is positive (per-creator model is better).
+"""
+
+NB06_WILCOXON = """\
+diffs = cmp["rmse_diff"].dropna().values
+
+stat, pval_two = wilcoxon(diffs)                              # two-sided
+stat_g, pval_one = wilcoxon(diffs, alternative="greater")    # one-sided: pc better
+
+print(f"Wilcoxon signed-rank test on RMSE differences (n={len(diffs)} creator pairs)")
+print(f"  Two-sided  : W={stat:.1f}   p={pval_two:.4f}")
+print(f"  One-sided  : W={stat_g:.1f}  p={pval_one:.4f}  (H1: per-creator RMSE < global)")
+print()
+if pval_two < 0.05:
+    print("✓ Significant at α=0.05 — the per-creator model differs from global in a "
+          "consistent direction.")
+else:
+    print("✗ Not significant at α=0.05 — no consistent per-creator advantage detected "
+          "across the full creator population.")
+
+print()
+print("Bootstrap 95% CI for mean RMSE diff (global − per-creator):")
+ci_lo, ci_hi = bootstrap_ci(diffs)
+print(f"  [{ci_lo:.4f}, {ci_hi:.4f}]")
+if ci_lo > 0:
+    print("  → CI entirely above 0: per-creator model reliably reduces RMSE on average.")
+elif ci_hi < 0:
+    print("  → CI entirely below 0: global model reliably better on average.")
+else:
+    print("  → CI straddles 0: no reliable direction of average difference.")
+"""
+
+NB06_DIST_FIG = """\
+fig, axes = plt.subplots(1, 2, figsize=(13, 4))
+
+ax = axes[0]
+ax.hist(cmp["rmse_diff"], bins=60, edgecolor="none", color="steelblue", alpha=0.8)
+ax.axvline(0, color="black", linewidth=0.8, linestyle="--", label="no difference")
+ax.axvline(cmp["rmse_diff"].mean(), color="red", linewidth=1.2, linestyle="-",
+           label=f"mean={cmp['rmse_diff'].mean():.3f}")
+ax.axvline(cmp["rmse_diff"].median(), color="orange", linewidth=1.2, linestyle="-.",
+           label=f"median={cmp['rmse_diff'].median():.3f}")
+ax.set_xlabel("RMSE_global − RMSE_per_creator")
+ax.set_ylabel("Number of creators")
+ax.set_title("Distribution of per-creator RMSE improvement")
+ax.legend(fontsize=8)
+
+ax = axes[1]
+ax.hist(cmp["spearman_diff"].dropna(), bins=60, edgecolor="none", color="darkorange", alpha=0.8)
+ax.axvline(0, color="black", linewidth=0.8, linestyle="--", label="no difference")
+ax.axvline(cmp["spearman_diff"].mean(), color="red", linewidth=1.2,
+           label=f"mean={cmp['spearman_diff'].mean():.3f}")
+ax.set_xlabel("Spearman_per_creator − Spearman_global")
+ax.set_ylabel("Number of creators")
+ax.set_title("Distribution of Spearman improvement")
+ax.legend(fontsize=8)
+
+plt.tight_layout()
+plt.show()
+
+print("Positive tail = per-creator model better for that creator.")
+"""
+
+NB06_MOD_MD = """\
+## 4. Moderation Analysis
+
+Our primary hypothesis: *personalisation gains more for creators with a larger
+training history*, because the per-creator model can learn creator-specific
+patterns only when enough data exist.
+
+We also check whether creators with **more variable content** (higher target std)
+benefit differently.
+
+> Caution: creators with 6–10 test videos have very noisy RMSE estimates.
+> We show group-level bootstrap CIs and avoid per-creator conclusions.
+"""
+
+NB06_MOD_SIZE = """\
+# ── by creator size (n_train bins) ──────────────────────────────────
+
+bins   = [0, 50, 100, 300, 10000]
+labels = ["24-50", "51-100", "101-300", "300+"]
+cmp["size_group"] = pd.cut(cmp["n_train"], bins=bins, labels=labels)
+
+group_stats = []
+for grp, sub in cmp.groupby("size_group", observed=True):
+    d = sub["rmse_diff"].dropna().values
+    ci_lo, ci_hi = bootstrap_ci(d) if len(d) >= 10 else (float("nan"), float("nan"))
+    group_stats.append({
+        "size_group": grp,
+        "n_creators": len(d),
+        "mean_rmse_diff": np.mean(d),
+        "median_rmse_diff": np.median(d),
+        "ci_lo": ci_lo, "ci_hi": ci_hi,
+        "pct_pc_wins": 100 * (d > 0).mean(),
+    })
+
+size_df = pd.DataFrame(group_stats).set_index("size_group")
+display(size_df.style.format({
+    "mean_rmse_diff":   "{:.4f}",
+    "median_rmse_diff": "{:.4f}",
+    "ci_lo":            "{:.4f}",
+    "ci_hi":            "{:.4f}",
+    "pct_pc_wins":      "{:.1f}%",
+}))
+"""
+
+NB06_MOD_SIZE_FIG = """\
+fig, axes = plt.subplots(1, 2, figsize=(13, 4))
+
+# Left: mean RMSE diff ± 95% CI by size group
+ax = axes[0]
+grps = size_df.index.tolist()
+x    = np.arange(len(grps))
+means = size_df["mean_rmse_diff"].values
+lo    = means - size_df["ci_lo"].values
+hi    = size_df["ci_hi"].values - means
+ax.bar(x, means, color="steelblue", alpha=0.7)
+ax.errorbar(x, means, yerr=[lo, hi], fmt="none", color="black", capsize=4, linewidth=1.5)
+ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
+ax.set_xticks(x); ax.set_xticklabels(grps)
+ax.set_xlabel("Creator train size (n_train videos)")
+ax.set_ylabel("Mean RMSE diff (global − per-creator)\\n(positive = per-creator wins)")
+ax.set_title("Per-creator improvement by creator size\\n(bars = bootstrap 95% CI)")
+
+# Right: violin of RMSE diff by group
+ax = axes[1]
+data_by_group = [cmp[cmp["size_group"] == g]["rmse_diff"].dropna().values for g in grps]
+vp = ax.violinplot(data_by_group, positions=x, showmedians=True, showextrema=False)
+for body in vp["bodies"]:
+    body.set_alpha(0.6); body.set_facecolor("steelblue")
+ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
+ax.set_xticks(x); ax.set_xticklabels(grps)
+ax.set_xlabel("Creator train size")
+ax.set_ylabel("RMSE diff (global − per-creator)")
+ax.set_title("Distribution of RMSE improvement by creator size")
+
+plt.tight_layout()
+plt.show()
+"""
+
+NB06_MOD_VAR_MD = """\
+### Moderation by Target Variance
+
+Creators whose video performance is more heterogeneous (higher std of relative
+target) might benefit more from personalisation — a per-creator model can
+capture that creator's unique spread.
+"""
+
+NB06_MOD_VAR = """\
+# scatter: RMSE diff vs target_std (colour by size group)
+fig, ax = plt.subplots(figsize=(8, 5))
+colors = {"24-50": "#aec6e8", "51-100": "#4c96d7", "101-300": "#1a5fa3", "300+": "#0a2f6b"}
+for grp, sub in cmp.groupby("size_group", observed=True):
+    ax.scatter(sub["target_std"], sub["rmse_diff"],
+               alpha=0.3, s=12, label=grp, color=colors.get(str(grp), "grey"))
+ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
+ax.set_xlabel("Target std (per creator test videos)")
+ax.set_ylabel("RMSE diff (global − per-creator)")
+ax.set_title("Per-creator improvement vs target variability")
+ax.legend(title="Train size", fontsize=8)
+plt.tight_layout()
+plt.show()
+
+# correlation: does higher target_std predict more gain?
+valid = cmp[["rmse_diff","target_std","n_train"]].dropna()
+rho_var,  pval_var  = spearmanr(valid["target_std"],  valid["rmse_diff"])
+rho_size, pval_size = spearmanr(valid["n_train"],     valid["rmse_diff"])
+print(f"Spearman(target_std,  rmse_diff) = {rho_var:.3f}  p={pval_var:.4f}")
+print(f"Spearman(n_train,     rmse_diff) = {rho_size:.3f}  p={pval_size:.4f}")
+"""
+
+NB06_NOISE_MD = """\
+## 5. Noise Caveat: Small-Creator Metrics
+
+The median creator has only 19 test videos. With so few observations,
+per-creator RMSE is a noisy estimator.  Below we show how RMSE uncertainty
+scales with test-set size (using prediction-level standard deviation as a proxy).
+"""
+
+NB06_NOISE = """\
+# CI width for per-creator RMSE as a function of n_test
+# Proxy: for each creator, compute std of (y_true - y_pred)^2 residuals → std / sqrt(n)
+def rmse_se_approx(df_creator):
+    resid2 = (df_creator.y_true - df_creator.y_pred) ** 2
+    return resid2.std() / (2 * _rmse(df_creator.y_true, df_creator.y_pred) * np.sqrt(len(resid2)))
+
+se_data = []
+for a, g in pred_pc.groupby("author_id"):
+    if len(g) >= 4:
+        se_data.append({"author_id": a, "n_test": len(g), "rmse_se": rmse_se_approx(g)})
+se_df = pd.DataFrame(se_data)
+
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.scatter(se_df["n_test"], se_df["rmse_se"], alpha=0.3, s=8, color="grey")
+ax.axvline(10, color="orange", linestyle=":", linewidth=1, label="n=10")
+ax.axvline(30, color="steelblue", linestyle=":", linewidth=1, label="n=30")
+ax.set_xscale("log")
+ax.set_xlabel("Number of test videos (log scale)")
+ax.set_ylabel("Approx. RMSE standard error")
+ax.set_title("RMSE uncertainty decreases with creator test-set size")
+ax.legend()
+plt.tight_layout()
+plt.show()
+
+pct_small = (se_df.n_test < 10).mean() * 100
+print(f"{pct_small:.0f}% of creators have < 10 test videos → their individual RMSE is unreliable.")
+print("Group-level statistics (bootstrap CIs above) are valid because they average over many creators.")
+"""
+
+NB06_SAVE_MD = """\
+## 6. Save Results
+"""
+
+NB06_SAVE = """\
+import datetime
+from creator_analytics.evaluate import log_experiment, save_metrics
+from creator_analytics.config import load_config
+
+config = load_config("config/default.yaml")
+today  = datetime.date.today().isoformat()
+exp_path  = config["paths"].get("experiments_log", "results/experiments.md")
+metrics_path = config["paths"].get("metrics", "results/metrics.json")
+
+log_experiment(
+    exp_path, "comparison_global_vs_percreator", today,
+    "all_test_videos", "comparison", {},
+    cv_rmse=None,
+    test_metrics={"rmse": m_pc["rmse"], "r2": m_pc["r2"], "spearman": m_pc["spearman"]},
+    comment=(f"global_rmse={m_global['rmse']:.4f}  "
+             f"wilcoxon_p={pval_two:.4f}  "
+             f"CI=[{ci_lo:.4f},{ci_hi:.4f}]  "
+             f"pc_wins={n_pc_wins_rmse}/{n_total}")
+)
+
+save_metrics({
+    "comparison_global_rmse": m_global["rmse"],
+    "comparison_pc_rmse":     m_pc["rmse"],
+    "comparison_rmse_diff_mean":   float(cmp.rmse_diff.mean()),
+    "comparison_rmse_diff_ci_lo":  ci_lo,
+    "comparison_rmse_diff_ci_hi":  ci_hi,
+    "comparison_wilcoxon_p":       pval_two,
+    "comparison_pct_pc_wins_rmse": float(n_pc_wins_rmse / n_total * 100),
+}, metrics_path)
+
+print("Saved to experiments.md and metrics.json")
+"""
+
+NB06_SUMMARY_MD = """\
+## Summary
+
+### What we found
+"""
+
+NB06_SUMMARY = """\
+# ── print cautious conclusions ──────────────────────────────────────────────
+
+print("=" * 65)
+print("MODEL COMPARISON SUMMARY")
+print("=" * 65)
+print(f"  Test videos: {len(pred_g):,}  |  Creators: {n_total}")
+print()
+print("Overall RMSE:")
+print(f"  predict_0            : {m_zero['rmse']:.4f}")
+print(f"  global XGB           : {m_global['rmse']:.4f}")
+print(f"  per-creator RF       : {m_pc['rmse']:.4f}")
+print(f"  per-creator vs global: {m_global['rmse'] - m_pc['rmse']:+.4f}  "
+      f"({(m_global['rmse'] - m_pc['rmse'])/m_global['rmse']*100:+.1f}%)")
+print()
+print("Paired per-creator test (Wilcoxon signed-rank):")
+print(f"  p-value (two-sided)  : {pval_two:.4f}")
+print(f"  Bootstrap 95% CI     : [{ci_lo:.4f}, {ci_hi:.4f}]")
+print(f"  Creators where per-creator wins (RMSE): "
+      f"{n_pc_wins_rmse}/{n_total} ({100*n_pc_wins_rmse/n_total:.0f}%)")
+print()
+print("Moderation (Spearman correlations with RMSE gain):")
+print(f"  n_train   vs gain    : ρ={rho_size:.3f}  p={pval_size:.4f}")
+print(f"  target_std vs gain   : ρ={rho_var:.3f}   p={pval_var:.4f}")
+print()
+print("Conclusion (cautious):")
+
+conclusions = []
+
+if ci_lo > 0:
+    conclusions.append(
+        "The 95% bootstrap CI lies entirely above 0: on average, the per-creator "
+        "RF model reduces RMSE compared with the global XGB model."
+    )
+elif ci_hi < 0:
+    conclusions.append(
+        "The 95% bootstrap CI lies entirely below 0: on average, the global model "
+        "outperforms the per-creator model."
+    )
+else:
+    conclusions.append(
+        "The 95% bootstrap CI straddles 0: the direction of average improvement "
+        "is uncertain."
+    )
+
+if pval_two < 0.05:
+    conclusions.append(
+        f"The Wilcoxon test is significant (p={pval_two:.4f}): the per-creator and "
+        "global models differ systematically across creators."
+    )
+else:
+    conclusions.append(
+        f"The Wilcoxon test is not significant (p={pval_two:.4f}): no systematic "
+        "directional difference detected at α=0.05."
+    )
+
+if abs(rho_size) > 0.1 and pval_size < 0.05:
+    direction = "more" if rho_size > 0 else "less"
+    conclusions.append(
+        f"Larger creators benefit {direction} from personalisation "
+        f"(Spearman ρ={rho_size:.3f}, p={pval_size:.4f})."
+    )
+else:
+    conclusions.append(
+        f"Creator size is not a strong predictor of personalisation gain "
+        f"(Spearman ρ={rho_size:.3f}, p={pval_size:.4f})."
+    )
+
+for i, c in enumerate(conclusions, 1):
+    print(f"  {i}. {c}")
+"""
+
+nb06 = make_nb([
+    new_markdown_cell(NB06_GOAL),
+    new_code_cell(COLAB_GUARD),
+    new_code_cell(SETUP_COMMON),
+    new_markdown_cell("## 0. Load Predictions"),
+    new_code_cell(NB06_LOAD),
+    new_code_cell(NB06_HELPERS),
+    new_code_cell(NB06_TRIVIAL),
+    new_markdown_cell(NB06_OVERALL_MD),
+    new_code_cell(NB06_OVERALL),
+    new_markdown_cell(NB06_PAIRED_MD),
+    new_code_cell(NB06_PAIRED),
+    new_markdown_cell(NB06_WILCOXON_MD),
+    new_code_cell(NB06_WILCOXON),
+    new_code_cell(NB06_DIST_FIG),
+    new_markdown_cell(NB06_MOD_MD),
+    new_code_cell(NB06_MOD_SIZE),
+    new_code_cell(NB06_MOD_SIZE_FIG),
+    new_markdown_cell(NB06_MOD_VAR_MD),
+    new_code_cell(NB06_MOD_VAR),
+    new_markdown_cell(NB06_NOISE_MD),
+    new_code_cell(NB06_NOISE),
+    new_markdown_cell(NB06_SAVE_MD),
+    new_code_cell(NB06_SAVE),
+    new_markdown_cell(NB06_SUMMARY_MD),
+    new_code_cell(NB06_SUMMARY),
+])
+
+nbformat.write(nb06, NB_DIR / "06-model-comparison.ipynb")
+print("Written notebooks/06-model-comparison.ipynb")
