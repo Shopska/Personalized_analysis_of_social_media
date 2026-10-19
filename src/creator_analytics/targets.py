@@ -18,6 +18,17 @@ import numpy as np
 import pandas as pd
 
 
+def get_nonmonotonic_video_ids(engagement: pd.DataFrame) -> frozenset[str]:
+    """Return video_ids that have at least one decrease in play_count over time.
+
+    These videos (1,240 in the full dataset) likely experienced a data-collection
+    reset and should be excluded before building the target.
+    """
+    eng_s = engagement.sort_values(["video_id", "days_since_post"])
+    diffs = eng_s.groupby("video_id")["play_count"].diff()
+    return frozenset(eng_s.loc[diffs < 0, "video_id"].unique())
+
+
 def build_target(
     engagement: pd.DataFrame,
     videos: pd.DataFrame,
@@ -72,8 +83,17 @@ def build_target(
             "the per-creator baseline must be computed on training data only."
         )
 
+    # Restrict to video_ids present in the videos table that was passed in.
+    # Without this, engagement_daily rows for videos excluded by earlier filters
+    # (e.g. min_videos_per_creator, non-monotonic exclusion) would appear in the output.
+    video_ids_in_scope: frozenset[str] = frozenset(videos["video_id"])
+
     eng_day = (
-        engagement.loc[engagement["days_since_post"] == day, ["video_id", "play_count"]]
+        engagement.loc[
+            (engagement["days_since_post"] == day)
+            & engagement["video_id"].isin(video_ids_in_scope),
+            ["video_id", "play_count"],
+        ]
         .copy()
         .reset_index(drop=True)
     )
