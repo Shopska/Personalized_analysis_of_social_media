@@ -17,3 +17,9 @@ pyarrow==24.0.0
 # Models and explainability
 xgboost==3.4.1
 shap==0.52.0
+
+# LLM-powered recommendations (optional — fallback works without it)
+anthropic>=0.40.0
+
+# .env file loading for API keys
+python-dotenv>=1.0.0

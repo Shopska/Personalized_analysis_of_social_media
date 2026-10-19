@@ -10,4 +10,25 @@ Naming: `NN-kebab-case-name.ipynb`, numbered in the order you'd actually read th
 5. **Notebooks and git merges don't mix well.** The underlying JSON makes conflicts nearly unreadable, and git can't meaningfully merge two people's changes to the same notebook. Practical rule: one notebook, one author, at a time. If two people need to work on the same analysis, split it into two notebooks or hand it off explicitly rather than editing in parallel.
 6. **Colab compatibility.** Each notebook carries an "Open in Colab" badge and a guarded first code cell (`if "google.colab" in sys.modules: ...`) that clones the repo and installs dependencies — safe to leave in when running locally, since the block is a no-op outside Colab.
 
-The four notebooks in this folder (`01-data-exploration`, `02-baseline-model`, `03-model-comparison`, `04-error-analysis`) are fully executed, in that order, and are meant to be read as the actual analysis behind `results/experiments.md` — not sample content to delete.
+## Notebooks in this project
+
+All seven notebooks are fully executed and committed with outputs. Run them in order:
+
+| # | Notebook | Goal | Key output |
+|---|----------|------|-----------|
+| 01 | `01-data-exploration.ipynb` | Audit three raw tables; characterise nulls, distributions, join integrity | Dataset overview |
+| 02 | `02-target-selection.ipynb` | Compare absolute vs relative play-count target; confirm follower-count leakage | Relative target chosen |
+| 03 | `03-feature-engineering.ipynb` | Build and validate all 10 feature groups (53 features); check leakage | `data/processed/features.parquet` |
+| 04 | `04-baseline-model.ipynb` | Train global RF + XGBoost; CV and test evaluation | `models/global_xgb.joblib`, `results/predictions_global.parquet` |
+| 05 | `05-per-creator-models.ipynb` | Train 1 437 personalised RF models; compare with global | `models/per_creator/RF/`, `results/predictions_per_creator.parquet` |
+| 06 | `06-model-comparison.ipynb` | Paired Wilcoxon test + bootstrap CI; personalisation wins for 65 % of creators | `results/figures/nb06_*.png` |
+| 07 | `07-explainability.ipynb` | SHAP for global model + all per-creator models; stability analysis | `results/shap_*.parquet`, `results/figures/nb07_*.png` |
+
+To regenerate all notebooks from source:
+```bash
+python scripts/make_notebooks.py   # writes .ipynb files from make_notebooks.py strings
+# then execute each with:
+.venv/bin/jupyter-nbconvert --to notebook --execute --inplace \
+    --ExecutePreprocessor.kernel_name=creator_analytics_venv \
+    notebooks/07-explainability.ipynb
+```
