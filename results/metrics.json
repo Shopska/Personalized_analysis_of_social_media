@@ -1,0 +1,9 @@
+{
+  "per_creator_rf_test_rmse": 0.8930986462683659,
+  "per_creator_rf_test_r2": 0.1859945708373162,
+  "per_creator_rf_worse_than_zero_cv": 158,
+  "per_creator_xgb_test_rmse": 0.9023386813035817,
+  "per_creator_xgb_test_r2": 0.16906397247246496,
+  "per_creator_xgb_worse_than_zero_cv": 294,
+  "per_creator_winner": "RF"
+}
