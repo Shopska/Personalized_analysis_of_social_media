@@ -1,0 +1,5 @@
+# sha256 checksums for files in data/raw/, so reproducibility can be checked
+# without the data itself being committed. Regenerate by rerunning this script.
+b049bc285129849f1b0ca7a6671b8cae87b35a3d272da4c20a53f03add258b7d  creator_daily.parquet
+821b9dd1353bf775fbf33097596c48f405849f8c2d100f72582bd4037c74149d  engagement_daily.parquet
+36690b515a3c443a7aebb310f402e6785b9d18414c6e373588ce43889bf42d71  videos.parquet

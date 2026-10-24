@@ -1,15 +1,18 @@
 seed: 42
 
 paths:
-  raw_data: data/raw/videos.parquet
+  raw_dir: data/raw
   checksums: data/raw/CHECKSUMS.txt
   metrics: results/metrics.json
   experiments_log: results/experiments.md
 
 data:
   hf_repo: lingbow/tiktok-video-engagement-200k
-  hf_config: null
   hf_split: train
+  tables:
+    - videos
+    - creator_daily
+    - engagement_daily
   author_column: author_id
   target: null
   min_videos_per_creator: 30

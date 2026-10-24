@@ -8,11 +8,11 @@ ifeq ($(OS),Windows_NT)
     PYTHON ?= python
     BIN    := $(VENV)/Scripts
 else
-    PYTHON ?= python3.13
+    PYTHON ?= python3
     BIN    := $(VENV)/bin
 endif
 
-.PHONY: setup reproduce
+.PHONY: setup reproduce test lint
 
 setup: ## Create .venv, install runtime+dev deps and this package, install pre-commit hooks
 	$(PYTHON) -m venv $(VENV)
@@ -21,7 +21,14 @@ setup: ## Create .venv, install runtime+dev deps and this package, install pre-c
 	$(BIN)/python -m pip install -e .
 	$(BIN)/pre-commit install
 
-reproduce: ## data -> train -> evaluate; prints RMSE / MAE / R2 for the README results table
+reproduce: ## data -> features -> global model -> per-creator models -> evaluation
 	$(BIN)/python scripts/download_data.py
-	$(BIN)/python -m creator_analytics train
-	$(BIN)/python -m creator_analytics evaluate
+	$(BIN)/python -m creator_analytics train --mode global
+	$(BIN)/python -m creator_analytics evaluate --mode global
+	$(BIN)/python -m creator_analytics train --mode per_creator
+
+test: ## Run pytest
+	$(BIN)/pytest tests/ -v
+
+lint: ## Run pre-commit on all files
+	$(BIN)/pre-commit run --all-files
