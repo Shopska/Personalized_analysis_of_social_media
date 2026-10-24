@@ -102,3 +102,42 @@ def train_test_split_by_creator(
         stratify=df[author_column],
     )
     return train_df.reset_index(drop=True), test_df.reset_index(drop=True)
+
+
+def load_cached_table(
+    name: str,
+    raw_dir: str | Path,
+    hf_repo: str,
+    cache_dir: str | Path | None = None,
+) -> pd.DataFrame:
+    """Load one table of the dataset (``videos``, ``engagement_daily``, ``creator_daily``).
+
+    Looks in ``raw_dir`` first, then in ``cache_dir`` (e.g. a Google Drive folder that
+    survives Colab restarts, unlike ``/content``), and only downloads from Hugging Face
+    if the table is in neither. A download is saved to the cache, so it happens once.
+
+    Parameters
+    ----------
+    name : str
+        Subset name on the Hub, also used as the file name: ``<name>.parquet``.
+    raw_dir : str or Path
+        Local data folder, usually ``data/raw``.
+    hf_repo : str
+        Dataset id on the Hub, e.g. ``lingbow/tiktok-video-engagement-200k``.
+    cache_dir : str or Path, optional
+        Persistent cache folder. Without it, downloads go straight to ``raw_dir``.
+    """
+    import shutil
+
+    local = Path(raw_dir) / f"{name}.parquet"
+    local.parent.mkdir(parents=True, exist_ok=True)
+    if not local.exists():
+        cached = Path(cache_dir) / f"{name}.parquet" if cache_dir else local
+        if not cached.exists():
+            from datasets import load_dataset  # imported here: only downloads need it
+
+            cached.parent.mkdir(parents=True, exist_ok=True)
+            load_dataset(hf_repo, name, split="train").to_pandas().to_parquet(cached, index=False)
+        if cached != local:
+            shutil.copy(cached, local)
+    return pd.read_parquet(local)

@@ -3,6 +3,8 @@ seed: 42
 paths:
   raw_data: data/raw/videos.parquet
   checksums: data/raw/CHECKSUMS.txt
+  interim_data: data/interim/videos_with_target.parquet
+  features: data/processed/features.parquet
   metrics: results/metrics.json
   experiments_log: results/experiments.md
 
@@ -11,8 +13,15 @@ data:
   hf_config: null
   hf_split: train
   author_column: author_id
-  target: null
+  target: log_views   # chosen in notebooks/01-eda.ipynb
   min_videos_per_creator: 30
+
+features:
+  history_gap_days: 7          # creator history uses only videos posted >= 7 days earlier
+  history_recent_k: 5          # "current form" = mean of the last 5 such videos
+  music_trend_window_days: 7   # sound popularity = uses in the previous 7 days
+  rare_category_min_count: 500 # categories with fewer videos are merged into "other"
+  categorical: [topic, music_selected_from]
 
 split:
   test_size: 0.2
