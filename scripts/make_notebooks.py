@@ -84,7 +84,10 @@ Join integrity is perfect: every `video_id` appears in both `videos` and
 `engagement_daily`; every `author_id` in both `videos` and `creator_daily`.
 Notable nulls: `transcript` 60.3 %, `sticker_text` 52.8 % (use `gpt_summary`
 which is 0 % null); `enterprise_verified` in `creator_daily` is 100 % null.
-`play_count` is highly right-skewed (median 570, max 44 442 900) —
+Text-derived statistics (`word_count`, `emoji_count`, `question_count`,
+`hashtag_count`, `speaking_rate`) are jointly missing for 37.9 % of videos
+— exactly those without a transcript.
+`play_count` is highly right-skewed (median 599, max 37 871 739) —
 log-scale transformation is required before modelling.
 """
 
@@ -133,6 +136,10 @@ print("### creator_daily")
 display(_schema(creator_daily))
 print("### engagement_daily")
 display(_schema(engagement))
+
+text_cols = ["word_count", "emoji_count", "question_count", "hashtag_count", "speaking_rate"]
+all_null = videos[text_cols].isna().all(axis=1).mean()
+print(f"\\nText statistics jointly missing (all null): {all_null*100:.1f}% of videos")
 """
 
 NB01_DATERANGE_MD = "## Date ranges"
@@ -271,19 +278,23 @@ Five questions are answered in sequence.
 
 **Conclusion** –
 **Day 14** is the right measurement point: 100 % exact coverage (day 7 = 98.4 %;
-day 30 = 35.3 %), and videos already hold a median **95.2 %** of their
-day-30 play_count by then.
-Day-30 under-coverage is time-based, not popularity-based (day-14 medians 623 vs
-587 for covered/uncovered groups).
-1 240 videos (0.59 %) have a monotonicity violation; when present the median
-drop is 96 % of peak — a data-collection reset artefact.
-**Relative target is strongly preferred**: 73.2 % of the variance in the
-absolute `log1p(play_count_day14)` is explained by `author_id` alone (test
-R² = 0.732); the relative target (subtract per-creator train median) reduces
-this to 4.4 %, isolating content-driven variance.
-`follower_count` at publish time (as-of join, 100 % coverage) has Spearman
-ρ = 0.639 with the absolute target — it is a powerful feature, not a target
-component, and confirms the scale of the creator effect.
+day 30 = 35.3 %). Using day 29 as the final reference (92.4 % coverage, n = 193 665):
+by day 14, videos hold a median **95.7 %** of their day-29 play_count (80.2 % are
+already ≥ 90 %; Spearman ρ = 0.996 with day-29).
+1 240 videos (0.59 %) have a monotonicity violation; when present the median drop
+is 96.2 % of peak — a data-collection reset artefact, excluded from all targets.
+**Relative target is strongly preferred**: 73.2 % of the variance in the absolute
+`log1p(play_count_day14)` is explained by `author_id` alone (test R² = 0.732); the
+relative target reduces this to 4.4 %, isolating content-driven variance.
+The "author-only" baseline has RMSE = 0.984 on the relative target
+(≈ ×2.7 — the bar any model must beat). Engagement rate has a weaker creator effect
+(test R² = 0.493, creator explains 49.3 %).
+`follower_count` at publish time (as-of backward join, 100 % coverage) has
+Spearman ρ = 0.645 with the absolute target — a powerful feature, not a target
+component. Per-creator Spearman correlations show cross-creator heterogeneity in
+feature effects for all features (std_real/std_null > 1): highest for `duration`
+(1.58) and `word_count` (1.57); lowest for emotions ≈ 1.2–1.3. This motivates
+per-creator models.
 """
 
 NB02_LOAD = """\
@@ -330,25 +341,19 @@ NB02_COV_NOTE = """\
 """
 
 NB02_COV_FIG = """\
-cov_df   = pd.DataFrame(rows)
-sel_days = [7, 14, 21, 28, 30]
-sub      = cov_df[cov_df["day"].isin(sel_days)].reset_index(drop=True)
+dsp = engagement["days_since_post"]
+print("days_since_post distribution across all rows:")
+print(f"  min={dsp.min()}  p25={dsp.quantile(0.25):.0f}  "
+      f"median={dsp.median():.0f}  p75={dsp.quantile(0.75):.0f}  max={dsp.max()}")
 
-fig, axes = plt.subplots(1, 2, figsize=(11, 4))
-for ax, col, title, color in [
-    (axes[0], "exact_%", "Exact coverage (== day)", "steelblue"),
-    (axes[1], "≥day_%",  "Cumulative coverage (≥ day)", "darkorange"),
-]:
-    bars = ax.bar([str(d) for d in sel_days], sub[col], color=color)
-    ax.set_ylim(0, 115); ax.set_xlabel("days_since_post"); ax.set_ylabel("% of videos")
-    ax.set_title(title)
-    for bar, v in zip(bars, sub[col]):
-        ax.text(bar.get_x() + bar.get_width() / 2, v + 1.5, f"{v:.0f}%",
-                ha="center", fontsize=8)
-
-fig.suptitle("Engagement record coverage by measurement day", fontweight="bold")
+fig, ax = plt.subplots(figsize=(9, 3))
+ax.hist(dsp.values, bins=range(0, 32), color="steelblue", edgecolor="white", linewidth=0.3)
+ax.set_xlabel("days_since_post")
+ax.set_ylabel("Row count")
+ax.set_title("Row count by days_since_post (all 6 M rows) — bump at day 14, drop at day 30")
+ax.xaxis.set_major_locator(mticker.MultipleLocator(5))
 fig.tight_layout()
-fig.savefig(FIGS / "fig1_coverage_by_day.png", dpi=120)
+fig.savefig(FIGS / "fig1_coverage_dsp.png", dpi=120)
 plt.show()
 """
 
@@ -372,70 +377,62 @@ if n_viol:
     print("→ Violations are severe but rare; likely a data-collection reset artefact.")
 """
 
-NB02_RATIO_MD = "## 3. Day-14 as a fraction of day-30 play_count"
+NB02_RATIO_MD = "## 3. View accumulation: fraction of day-29 play_count"
 
-NB02_RATIO = """\
+NB02_ACCUM_FIG = """\
 def _exact_plays(day: int) -> pd.Series:
     return engagement[engagement["days_since_post"] == day].set_index("video_id")["play_count"]
 
-pc7, pc14, pc30 = _exact_plays(7), _exact_plays(14), _exact_plays(30)
-common = pc7.index.intersection(pc14.index).intersection(pc30.index)
-print(f"Videos with exact records at days 7, 14, 30: {len(common):,}  "
-      f"({len(common)/len(videos)*100:.1f}%)")
+pc7, pc14, pc29 = _exact_plays(7), _exact_plays(14), _exact_plays(29)
+n_ref = len(pc29)
+print(f"Videos with day-29 record (reference): {n_ref:,}  ({n_ref/len(videos)*100:.1f}%)")
 
-ratio14 = pc14.loc[common] / pc30.loc[common].replace(0, np.nan)
-ratio7  = pc7.loc[common]  / pc30.loc[common].replace(0, np.nan)
+rng_acc = np.random.default_rng(cfg["seed"])
+sample_ids = rng_acc.choice(pc29.index.to_numpy(), size=min(20_000, n_ref), replace=False)
 
-for label, r in [("day 7 / day 30", ratio7), ("day 14 / day 30", ratio14)]:
-    q = r.quantile([0.05, 0.25, 0.50, 0.75, 0.95])
-    print(f"\\n{label}  (n={r.notna().sum():,})")
-    print(f"  p5={q[0.05]:.3f}  p25={q[0.25]:.3f}  median={q[0.50]:.3f}"
-          f"  p75={q[0.75]:.3f}  p95={q[0.95]:.3f}")
-    print(f"  Videos ≥ 90% of day-30 already by this day: {(r>=0.9).mean()*100:.1f}%")
+curve = (engagement[engagement["video_id"].isin(sample_ids)]
+         .pivot_table(index="video_id", columns="days_since_post",
+                      values="play_count", aggfunc="first"))
+curve_frac = curve.div(curve[29].replace(0, np.nan), axis=0)
+
+days_plot = sorted([d for d in range(0, 30) if d in curve_frac.columns])
+med_vals  = curve_frac[days_plot].median()
+p25_vals  = curve_frac[days_plot].quantile(0.25)
+p75_vals  = curve_frac[days_plot].quantile(0.75)
+
+fig, ax = plt.subplots(figsize=(10, 4))
+ax.plot(days_plot, med_vals, color="steelblue", linewidth=2, label="Median")
+ax.fill_between(days_plot, p25_vals, p75_vals, alpha=0.3, color="steelblue",
+                label="25–75th percentile")
+ax.axvline(14, color="red", linestyle="--", linewidth=1.2, label="Day 14 (our target)")
+ax.axvline(7,  color="orange", linestyle="--", linewidth=1.0, alpha=0.8, label="Day 7")
+ax.axhline(0.9, color="gray", linestyle=":", linewidth=0.8, alpha=0.7)
+ax.set_xlabel("Days since posting"); ax.set_ylabel("Fraction of day-29 play_count")
+ax.set_title(f"View accumulation: median + IQR  (reference = day 29, n={n_ref:,} videos)")
+ax.legend(fontsize=8); ax.set_xlim(0, 29)
+fig.tight_layout()
+fig.savefig(FIGS / "fig2_accumulation_curve.png", dpi=120)
+plt.show()
 """
 
-NB02_BIAS = """\
-# Bias check: do day-30 videos differ systematically?
-has30  = set(pc30.index)
-v30    = videos[ videos["video_id"].isin(has30)].copy()
-v_no30 = videos[~videos["video_id"].isin(has30)].copy()
+NB02_ACCUM_TABLE = """\
+rows_cmp = []
+for label, pcN in [("day 7", pc7), ("day 14", pc14)]:
+    common = pcN.index.intersection(pc29.index)
+    ratio  = (pcN.loc[common] / pc29.loc[common].replace(0, np.nan)).dropna()
+    spe    = pcN.loc[common].corr(pc29.loc[common], method="spearman")
+    q      = ratio.quantile([0.05, 0.50])
+    rows_cmp.append({
+        "day": label,
+        "n": len(common),
+        "median": round(q[0.50], 3),
+        "p5": round(q[0.05], 3),
+        "≥0.9": f"{(ratio >= 0.9).mean():.1%}",
+        "Spearman w/ day-29": round(spe, 3),
+    })
 
-for grp, label in [(v30, "has day-30"), (v_no30, "no day-30")]:
-    s = pd.to_datetime(grp["create_date"], errors="coerce")
-    pc14_grp = pc14.reindex(grp["video_id"]).dropna()
-    print(f"{label} ({len(grp):,} videos): median create_date={s.median().date()}  "
-          f"play_count(day14) median={pc14_grp.median():.0f}  mean={pc14_grp.mean():.0f}")
-
-fig, axes = plt.subplots(1, 3, figsize=(14, 4))
-
-# CDF of ratios
-for r, label, color in [(ratio7, "day 7 / day 30", "steelblue"),
-                         (ratio14, "day 14 / day 30", "darkorange")]:
-    rc = r.dropna().clip(0, 1)
-    axes[0].plot(np.sort(rc), np.linspace(0, 1, len(rc)), label=label, color=color)
-axes[0].axvline(0.9, color="gray", linestyle="--", linewidth=0.8, label="90% threshold")
-axes[0].set_xlabel("Fraction of day-30 play_count"); axes[0].set_ylabel("CDF")
-axes[0].set_title("CDF: day-7 and day-14 vs day-30"); axes[0].legend(fontsize=8)
-
-# Bias: create_date
-for grp, label, c in [(v30, "has day-30", "darkorange"), (v_no30, "no day-30", "steelblue")]:
-    s = pd.to_datetime(grp["create_date"], errors="coerce")
-    axes[1].hist(s.dt.dayofyear, bins=40, alpha=0.55, label=label, color=c, density=True)
-axes[1].set_xlabel("Day of year (2024)"); axes[1].set_ylabel("Density")
-axes[1].set_title("Publication date: day-30 vs not"); axes[1].legend(fontsize=8)
-
-# Bias: play_count(day14)
-for grp, label, c in [(v30, "has day-30", "darkorange"), (v_no30, "no day-30", "steelblue")]:
-    pc_g = pc14.reindex(grp["video_id"]).dropna().clip(lower=1)
-    axes[2].hist(np.log1p(pc_g), bins=50, alpha=0.55, label=label, color=c, density=True)
-axes[2].set_xlabel("log1p(play_count at day 14)"); axes[2].set_ylabel("Density")
-axes[2].set_title("play_count(day14): day-30 vs not"); axes[2].legend(fontsize=8)
-
-fig.suptitle("Day-30 bias check and fraction of day-30 engagement captured earlier",
-             fontweight="bold")
-fig.tight_layout()
-fig.savefig(FIGS / "fig2_day30_ratio_and_bias.png", dpi=120)
-plt.show()
+display(pd.DataFrame(rows_cmp).set_index("day"))
+print(f"\\n→ By day 14, a typical video has {rows_cmp[1]['median']:.1%} of its day-29 play_count.")
 """
 
 NB02_TARGET_MD = "## 4. Absolute vs relative target"
@@ -456,11 +453,6 @@ NB02_BUILD_TARGET = """\
 abs_t = build_target(engagement, vids_f, day=14, mode="absolute")
 rel_t = build_target(engagement, vids_f, day=14, mode="relative",
                      train_video_ids=train_ids)
-
-for label, t in [("Absolute", abs_t), ("Relative", rel_t)]:
-    print(f"{label}: n={len(t):,}  mean={t['target'].mean():.3f}"
-          f"  std={t['target'].std():.3f}"
-          f"  min={t['target'].min():.2f}  max={t['target'].max():.2f}")
 """
 
 NB02_TARGET_FIG = """\
@@ -487,44 +479,116 @@ plt.show()
 """
 
 NB02_R2 = """\
-def _author_r2(target_df: pd.DataFrame) -> tuple[float, float]:
-    \"\"\"R² of 'predict per-author train mean' model on test set.\"\"\"
+def _metrics(y, pred):
+    \"\"\"R² і RMSE для одного набору (y — справжні значення, pred — прогноз).\"\"\"
+    resid = y - pred
+    ss_res = (resid ** 2).sum()
+    ss_tot = ((y - y.mean()) ** 2).sum()
+    return {"R2": float(1 - ss_res / ss_tot),
+            "RMSE": float(np.sqrt((resid ** 2).mean()))}
+
+
+def _author_baseline(target_df: pd.DataFrame) -> dict:
+    \"\"\"Модель 'прогноз = середнє target автора на train': метрики на train і test.\"\"\"
     td = target_df.merge(vids_f[["video_id", "author_id"]], on="video_id", how="inner")
     tr = td[td["video_id"].isin(train_ids)]
-    te = td[td["video_id"].isin(test_ids)].copy()
-    author_means = tr.groupby("author_id")["target"].mean()
-    te["pred"]   = te["author_id"].map(author_means).fillna(tr["target"].mean())
-    ss_res = ((te["target"] - te["pred"]) ** 2).sum()
-    ss_tot = ((te["target"] - te["target"].mean()) ** 2).sum()
-    tr_pred = tr.copy()
-    tr_pred["pred"] = tr_pred["author_id"].map(author_means)
-    ss_res_tr = ((tr_pred["target"] - tr_pred["pred"]) ** 2).sum()
-    ss_tot_tr = ((tr_pred["target"] - tr_pred["target"].mean()) ** 2).sum()
-    return float(1 - ss_res_tr / ss_tot_tr), float(1 - ss_res / ss_tot)
+    te = td[td["video_id"].isin(test_ids)]
 
-r2_abs_tr, r2_abs_te = _author_r2(abs_t)
-r2_rel_tr, r2_rel_te = _author_r2(rel_t)
-print(f"R² (per-author mean model)  |  train  |  test")
-print(f"  Absolute target            |  {r2_abs_tr:.3f}  |  {r2_abs_te:.3f}")
-print(f"  Relative target            |  {r2_rel_tr:.3f}  |  {r2_rel_te:.3f}")
-print(f"\\n→ {r2_abs_te:.1%} of absolute-target variance is author_id alone.")
-print(f"→ Relative target reduces this to {max(r2_rel_te,0):.1%}.")
+    author_means = tr.groupby("author_id")["target"].mean()
+    tr_pred = tr["author_id"].map(author_means)
+    te_pred = te["author_id"].map(author_means).fillna(tr["target"].mean())
+
+    return {"train": _metrics(tr["target"], tr_pred),
+        "test":  _metrics(te["target"], te_pred),
+        "train_std": float(tr["target"].std()),
+        "test_std":  float(te["target"].std())}
+
+res = {"Absolute": _author_baseline(abs_t), "Relative": _author_baseline(rel_t)}
+
+print("Модель 'лише автор' (прогноз = середнє target автора на train)\\n")
+print(f"{'target':<10}|{'R² train':>9} |{'R² test':>8} |{'RMSE train':>11} |{'RMSE test':>10} "
+      f"|{'std train':>10} |{'std test':>9}")
+for name, r in res.items():
+    print(f"{name:<10}|{r['train']['R2']:>9.3f} |{r['test']['R2']:>8.3f} |"
+        f"{r['train']['RMSE']:>11.3f} |{r['test']['RMSE']:>10.3f} |"
+        f"{r['train_std']:>10.3f} |{r['test_std']:>9.3f}")
+
+a, rl = res["Absolute"]["test"], res["Relative"]["test"]
+print(f"\\n→ {a['R2']:.1%} дисперсії absolute target пояснюється лише автором.")
+print(f"→ Для relative target — {max(rl['R2'], 0):.1%}.")
+print(f"→ Типова помилка 'лише автор' на relative target: RMSE = {rl['RMSE']:.3f} "
+      f"(≈ ×{np.exp(rl['RMSE']):.1f} у той чи інший бік) — планка, яку має побити модель.")
 """
 
 NB02_R2_FIG = """\
-fig, ax = plt.subplots(figsize=(5, 4))
-labels  = ["Absolute\\n(test)", "Relative\\n(test)"]
-heights = [r2_abs_te, max(r2_rel_te, 0)]
-bars    = ax.bar(labels, heights, color=["steelblue", "darkorange"], width=0.4)
-for bar, h in zip(bars, heights):
-    ax.text(bar.get_x() + bar.get_width() / 2, h + 0.01, f"{h:.3f}",
-            ha="center", fontsize=11)
-ax.set_ylim(0, max(heights) * 1.3)
-ax.set_ylabel("R²")
-ax.set_title('R² of "predict per-author mean" model on test set\\n'
-             '(what fraction of variance is creator-level?)', fontsize=9)
+names  = ["Absolute", "Relative"]
+xlabs  = ["Absolute\\n(test)", "Relative\\n(test)"]
+colors = ["steelblue", "darkorange"]
+r2     = [max(res[n]["test"]["R2"], 0) for n in names]
+rmse   = [res[n]["test"]["RMSE"] for n in names]
+std    = [res[n]["test_std"] for n in names]
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 4))
+
+bars = ax1.bar(xlabs, r2, color=colors, width=0.4)
+for bar, h in zip(bars, r2):
+    ax1.text(bar.get_x() + bar.get_width() / 2, h + 0.01, f"{h:.3f}", ha="center", fontsize=11)
+ax1.set_ylim(0, max(r2) * 1.3)
+ax1.set_ylabel("R²")
+ax1.set_title("R²: частка розкиду, яку пояснює автор", fontsize=9)
+
+bars = ax2.bar(xlabs, rmse, color=colors, width=0.4, label="RMSE моделі 'лише автор'")
+for bar, h, s in zip(bars, rmse, std):
+    x = bar.get_x() + bar.get_width() / 2
+    ax2.text(x, h + 0.03, f"{h:.3f}", ha="center", fontsize=11)
+    ax2.hlines(s, bar.get_x() - 0.05, bar.get_x() + bar.get_width() + 0.05,
+               colors="black", linestyles="--")
+    ax2.text(bar.get_x() + bar.get_width() + 0.07, s, f"std {s:.2f}", va="center", fontsize=9)
+ax2.plot([], [], "k--", label="std target на test")
+ax2.set_ylim(0, max(std + rmse) * 1.25)
+ax2.set_ylabel("RMSE (лог-одиниці)")
+ax2.set_title("RMSE: типова помилка прогнозу", fontsize=9)
+ax2.legend(fontsize=8, loc="upper right")
+
+fig.suptitle('Модель "прогноз = середнє автора на train", test set', fontsize=10)
 fig.tight_layout()
-fig.savefig(FIGS / "fig4_author_r2.png", dpi=120)
+fig.savefig(FIGS / "fig4_author_r2_rmse.png", dpi=120)
+plt.show()
+"""
+
+NB02_ENG_RATE = """\
+eng14_er = (engagement[engagement["days_since_post"] == 14]
+            [["video_id", "play_count", "like_count", "comment_count", "share_count"]])
+eng14_er = eng14_er[eng14_er["play_count"] > 0].copy()
+eng14_er["engagement_rate"] = (
+    (eng14_er["like_count"] + eng14_er["comment_count"] + eng14_er["share_count"])
+    / eng14_er["play_count"])
+
+er_t = (vids_f[["video_id"]]
+        .merge(eng14_er[["video_id", "engagement_rate"]], on="video_id")
+        .rename(columns={"engagement_rate": "target"}))
+er_res = _author_baseline(er_t)
+print("Engagement rate = (likes+comments+shares) / play_count at day 14")
+print(f"Creator explains {er_res['test']['R2']:.1%} of engagement_rate variance "
+      f"(vs {res['Absolute']['test']['R2']:.1%} for log-views).")
+print(f"R² train={er_res['train']['R2']:.3f}  test={er_res['test']['R2']:.3f}")
+"""
+
+NB02_TOP15_FIG = """\
+abs_with_auth = abs_t.merge(vids_f[["video_id", "author_id"]], on="video_id")
+top15 = vids_f["author_id"].value_counts().head(15).index
+d15   = abs_with_auth[abs_with_auth["author_id"].isin(top15)]
+order = d15.groupby("author_id")["target"].median().sort_values().index
+
+labels15 = [f"C{i+1}" for i in range(len(order))]
+groups15  = [d15.loc[d15["author_id"] == a, "target"].values for a in order]
+
+fig, ax = plt.subplots(figsize=(12, 5))
+ax.boxplot(groups15, tick_labels=labels15, showfliers=False)
+ax.set_ylabel("log1p(play_count) at day 14")
+ax.set_title("Top-15 creators by video count — log-view level and spread (anonymized)")
+fig.tight_layout()
+fig.savefig(FIGS / "fig4b_top15_creators.png", dpi=120)
 plt.show()
 """
 
@@ -546,16 +610,79 @@ print(f"Spearman ρ = {spearman:.3f}")
 """
 
 NB02_FOLLOWER_FIG = """\
-sample = joined.sample(min(30_000, len(joined)), random_state=42)
 fig, ax = plt.subplots(figsize=(7, 5))
-ax.scatter(sample["log_fc"], sample["target"],
-           alpha=0.05, s=4, color="steelblue", rasterized=True)
+hb = ax.hexbin(joined["log_fc"], joined["target"], gridsize=60, bins="log", cmap="viridis")
 ax.set_xlabel("log1p(follower_count at publish date)")
 ax.set_ylabel("log1p(play_count at day 14)")
-ax.set_title(f"Followers vs day-14 play_count\\n"
+ax.set_title(f"Followers vs day-14 play_count (hexbin)\\n"
              f"Pearson r={pearson:.3f}  Spearman ρ={spearman:.3f}  n={len(joined):,}")
+fig.colorbar(hb, label="log10(video count)")
 fig.tight_layout()
 fig.savefig(FIGS / "fig5_follower_vs_target.png", dpi=120)
+plt.show()
+"""
+
+NB02_PC_CORR_MD = "## 6. Per-creator correlations: do feature effects vary between creators?"
+
+NB02_PC_CORR = """\
+FEATS_PC = ["duration", "word_count", "emoji_count", "question_count",
+            "hashtag_count", "speaking_rate", "joy", "sadness",
+            "disgust", "surprise", "anger", "fear"]
+
+dfc_pc = (vids_f[["video_id", "author_id"]]
+          .merge(abs_t[["video_id", "target"]], on="video_id")
+          .merge(videos[["video_id"] + FEATS_PC + ["transcript", "sticker_text"]], on="video_id"))
+dfc_pc["has_transcript"]   = dfc_pc["transcript"].notna().astype(float)
+dfc_pc["has_sticker_text"] = dfc_pc["sticker_text"].notna().astype(float)
+
+FEATS_ALL = FEATS_PC + ["has_transcript", "has_sticker_text"]
+
+rng_pc = np.random.default_rng(cfg["seed"])
+dfc_pc["target_shuf"] = dfc_pc.groupby("author_id")["target"].transform(
+    lambda s: rng_pc.permutation(s.to_numpy()))
+
+def _creator_corr(df, feat, tgt):
+    return df.groupby("author_id")[[feat, tgt]].apply(
+        lambda g: g[feat].corr(g[tgt], method="spearman")).dropna()
+
+pc_rows = []
+for f in FEATS_ALL:
+    r_real = _creator_corr(dfc_pc, f, "target")
+    r_null = _creator_corr(dfc_pc, f, "target_shuf")
+    r_glob = dfc_pc[f].corr(dfc_pc["target"], method="spearman")
+    pc_rows.append({
+        "feature": f,
+        "global_ρ": round(r_glob, 3),
+        "median_per-creator": round(r_real.median(), 3),
+        "std_real": round(r_real.std(), 3),
+        "std_null": round(r_null.std(), 3),
+        "std_real/std_null": round(r_real.std() / r_null.std(), 2),
+        "frac_opposite_sign": round((np.sign(r_real) != np.sign(r_glob)).mean(), 3),
+    })
+
+pc_df = (pd.DataFrame(pc_rows).set_index("feature")
+         .sort_values("std_real/std_null", ascending=False))
+display(pc_df)
+"""
+
+NB02_PC_CORR_FIG = """\
+FEATS_PLOT_PC = ["duration", "word_count", "question_count", "hashtag_count",
+                 "speaking_rate", "joy", "sadness", "has_transcript", "has_sticker_text"]
+
+real_dists = {f: _creator_corr(dfc_pc, f, "target").values for f in FEATS_PLOT_PC}
+
+fig, ax = plt.subplots(figsize=(11, 5))
+ax.boxplot([real_dists[f] for f in FEATS_PLOT_PC],
+           tick_labels=FEATS_PLOT_PC, showfliers=False)
+for i, f in enumerate(FEATS_PLOT_PC, 1):
+    if f in pc_df.index:
+        ax.scatter(i, pc_df.loc[f, "global_ρ"], color="red", zorder=5, s=60, marker="D")
+ax.axhline(0, color="black", linewidth=0.8)
+ax.set_ylabel("Spearman ρ with log_views per creator")
+ax.set_title("Per-creator feature correlations (red ◆ = global Spearman ρ)")
+ax.tick_params(axis="x", rotation=45)
+fig.tight_layout()
+fig.savefig(FIGS / "fig6_per_creator_correlations.png", dpi=120)
 plt.show()
 """
 
@@ -594,12 +721,10 @@ nb01 = make_nb([
     new_code_cell(NB01_DATERANGE),
     new_markdown_cell(NB01_CREATORS_MD),
     new_code_cell(NB01_CREATORS),
-    new_code_cell(NB01_CREATORS_FIG),
     new_code_cell(NB01_THRESHOLD),
     new_markdown_cell(NB01_JOIN_MD),
     new_code_cell(NB01_JOIN),
     new_markdown_cell(NB01_ENG_MD),
-    new_code_cell(NB01_ENG_DSP),
     new_code_cell(NB01_ENG_METRICS),
     new_code_cell(NB01_ENG_FIG),
 ])
@@ -616,17 +741,22 @@ nb02 = make_nb([
     new_markdown_cell(NB02_MONO_MD),
     new_code_cell(NB02_MONO),
     new_markdown_cell(NB02_RATIO_MD),
-    new_code_cell(NB02_RATIO),
-    new_code_cell(NB02_BIAS),
+    new_code_cell(NB02_ACCUM_FIG),
+    new_code_cell(NB02_ACCUM_TABLE),
     new_markdown_cell(NB02_TARGET_MD),
     new_code_cell(NB02_SPLIT),
     new_code_cell(NB02_BUILD_TARGET),
     new_code_cell(NB02_TARGET_FIG),
     new_code_cell(NB02_R2),
     new_code_cell(NB02_R2_FIG),
+    new_code_cell(NB02_ENG_RATE),
+    new_code_cell(NB02_TOP15_FIG),
     new_markdown_cell(NB02_FOLLOWER_MD),
     new_code_cell(NB02_FOLLOWER),
     new_code_cell(NB02_FOLLOWER_FIG),
+    new_markdown_cell(NB02_PC_CORR_MD),
+    new_code_cell(NB02_PC_CORR),
+    new_code_cell(NB02_PC_CORR_FIG),
 ])
 
 nbformat.write(nb01, NB_DIR / "01-data-exploration.ipynb")
