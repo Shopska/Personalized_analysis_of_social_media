@@ -116,3 +116,23 @@ def build_target(
     eng_day["target"] = eng_day["target"] - eng_day["creator_median"]
 
     return eng_day[["video_id", "target"]].reset_index(drop=True)
+
+
+def add_targets(df: pd.DataFrame, engagement: pd.DataFrame, day: int = 14) -> pd.DataFrame:
+    """Add ``target_abs``, ``target_rel`` and ``creator_baseline`` to a split table.
+
+    ``df`` needs ``video_id``, ``author_id`` and ``split``. The relative target uses
+    creator medians from the train split only. ``creator_baseline`` is that median, so
+    ``target_abs = creator_baseline + target_rel``.
+    """
+    train_ids = set(df.loc[df["split"].eq("train"), "video_id"])
+    abs_t = build_target(engagement, df, day=day, mode="absolute")
+    rel_t = build_target(engagement, df, day=day, mode="relative", train_video_ids=train_ids)
+    abs_t = abs_t.drop_duplicates("video_id").set_index("video_id")["target"]
+    rel_t = rel_t.drop_duplicates("video_id").set_index("video_id")["target"]
+
+    out = df.copy()
+    out["target_abs"] = out["video_id"].map(abs_t)
+    out["target_rel"] = out["video_id"].map(rel_t)
+    out["creator_baseline"] = out["target_abs"] - out["target_rel"]
+    return out

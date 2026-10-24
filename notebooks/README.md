@@ -18,7 +18,7 @@ All seven notebooks are fully executed and committed with outputs. Run them in o
 |---|----------|------|-----------|
 | 01 | `01-data-exploration.ipynb` | Audit three raw tables; characterise nulls, distributions, join integrity | Dataset overview |
 | 02 | `02-target-selection.ipynb` | Compare absolute vs relative play-count target; confirm follower-count leakage | Relative target chosen |
-| 03 | `03-feature-engineering.ipynb` | Build and validate all 10 feature groups (53 features); check leakage | `data/processed/features.parquet` |
+| 03 | `03-feature-engineering.ipynb` | Build leakage-safe features (106 features, 14 groups) with `creator_analytics.features`; drop text stats that are a collection artifact | `data/processed/features.parquet`, `dataset_index.parquet`, `feature_spec.json` |
 | 04 | `04-baseline-model.ipynb` | Train global RF + XGBoost; CV and test evaluation | `models/global_xgb.joblib`, `results/predictions_global.parquet` |
 | 05 | `05-per-creator-models.ipynb` | Train 1 437 personalised RF models; compare with global | `models/per_creator/RF/`, `results/predictions_per_creator.parquet` |
 | 06 | `06-model-comparison.ipynb` | Paired Wilcoxon test + bootstrap CI; personalisation wins for 65 % of creators | `results/figures/nb06_*.png` |

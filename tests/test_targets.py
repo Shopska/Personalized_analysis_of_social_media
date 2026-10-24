@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from creator_analytics.targets import build_target
+from creator_analytics.targets import add_targets, build_target, get_nonmonotonic_video_ids
 
 
 @pytest.fixture
@@ -104,3 +104,65 @@ def test_relative_train_residuals_sum_to_zero_per_creator(eng, vids):
     result = result.merge(vids, on="video_id")
     for _, group in result.groupby("author_id"):
         assert abs(group["target"].median()) < 1e-10
+
+
+def test_build_target_respects_videos_filter():
+    """build_target must only return rows for video_ids in the videos argument.
+    Previously it returned all engagement rows regardless of the videos scope.
+    """
+    engagement = pd.DataFrame(
+        {
+            "video_id": ["v1", "v2", "v3"],
+            "days_since_post": [14, 14, 14],
+            "play_count": [100, 200, 300],
+        }
+    )
+    # Pass only v1 and v2 — v3 must NOT appear in the output
+    videos_subset = pd.DataFrame({"video_id": ["v1", "v2"], "author_id": ["a", "a"]})
+    result = build_target(engagement, videos_subset, day=14, mode="absolute")
+    assert set(result["video_id"]) == {"v1", "v2"}
+    assert len(result) == 2
+
+
+def test_get_nonmonotonic_flags_decreasing_video():
+    engagement = pd.DataFrame(
+        {
+            "video_id": ["v1", "v1", "v1", "v2", "v2"],
+            "days_since_post": [7, 14, 21, 7, 14],
+            "play_count": [100, 200, 150, 100, 200],  # v1 drops 200→150
+        }
+    )
+    bad = get_nonmonotonic_video_ids(engagement)
+    assert "v1" in bad
+    assert "v2" not in bad
+
+
+def test_get_nonmonotonic_monotonic_video_is_clean():
+    engagement = pd.DataFrame(
+        {
+            "video_id": ["v1", "v1"],
+            "days_since_post": [7, 14],
+            "play_count": [100, 200],
+        }
+    )
+    assert len(get_nonmonotonic_video_ids(engagement)) == 0
+
+
+def test_add_targets_baseline_plus_relative_equals_absolute():
+    engagement = pd.DataFrame(
+        {
+            "video_id": ["v1", "v2", "v3", "v4"],
+            "days_since_post": [14, 14, 14, 14],
+            "play_count": [100, 300, 1000, 50],
+        }
+    )
+    df = pd.DataFrame(
+        {
+            "video_id": ["v1", "v2", "v3", "v4"],
+            "author_id": ["a", "a", "a", "b"],
+            "split": ["train", "train", "test", "train"],
+        }
+    )
+    out = add_targets(df, engagement, day=14)
+    assert np.allclose(out["creator_baseline"] + out["target_rel"], out["target_abs"])
+    assert np.isclose(out.loc[0, "creator_baseline"], np.median(np.log1p([100, 300])))

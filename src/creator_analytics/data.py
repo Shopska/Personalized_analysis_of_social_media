@@ -103,3 +103,34 @@ def train_test_split_by_creator(
         stratify=df[author_column],
     )
     return train_df.reset_index(drop=True), test_df.reset_index(drop=True)
+
+
+def prepare_dataset(
+    videos: pd.DataFrame,
+    engagement: pd.DataFrame,
+    author_column: str = "author_id",
+    min_videos: int = 30,
+    test_size: float = 0.2,
+    seed: int = 42,
+    target_day: int = 14,
+) -> pd.DataFrame:
+    """Clean, filter and split the videos table into the modelling set.
+
+    Drops videos with a non-monotonic ``play_count`` (data-collection resets) and
+    videos with no engagement record at exactly ``target_day``, keeps creators with at
+    least ``min_videos`` videos, and adds a ``split`` column (``"train"``/``"test"``)
+    stratified by creator.
+    """
+    from creator_analytics.targets import get_nonmonotonic_video_ids
+
+    bad_ids = get_nonmonotonic_video_ids(engagement)
+    day_ids = set(engagement.loc[engagement["days_since_post"] == target_day, "video_id"])
+    keep = ~videos["video_id"].isin(bad_ids) & videos["video_id"].isin(day_ids)
+    df = filter_creators(videos[keep], author_column, min_videos)
+
+    train_df, _ = train_test_split_by_creator(df, author_column, test_size, seed)
+    df = df.copy()
+    is_train = df["video_id"].isin(set(train_df["video_id"]))
+    df["split"] = is_train.map({True: "train", False: "test"})
+    df.attrs["n_nonmonotonic_excluded"] = len(bad_ids)
+    return df

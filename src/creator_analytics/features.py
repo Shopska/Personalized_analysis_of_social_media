@@ -1,506 +1,622 @@
-"""Feature-engineering for TikTok creator analytics.
+"""Feature engineering for TikTok creator analytics.
 
-Public API
-----------
-build_features(videos, creator_daily, train_video_ids) -> pd.DataFrame
-    Builds all feature groups and joins them on video_id.
+Each ``add_*`` function takes the prepared video table (one row per video, with a
+``split`` column from :func:`creator_analytics.data.prepare_dataset`) and returns
+``(table_with_new_columns, new_feature_names)``. The notebook
+``notebooks/03-feature-engineering.ipynb`` calls them step by step;
+:func:`build_feature_table` runs the same steps end to end.
 
-follower_asof_join(videos, creator_daily) -> pd.DataFrame
-    Adds follower_count_at_publish via a look-ahead-free as-of join
-    (kept for backward compatibility with notebook 02).
-
-FEATURE_DESCRIPTIONS
-    Dict mapping feature name -> human-readable Ukrainian description.
-    Used downstream to translate SHAP values into creator recommendations.
-
-Leakage rules enforced here
-----------------------------
-- No columns from engagement_daily appear in any feature function.
-- Anything computed from data (top-N hashtags, rare-category grouping) uses
-  only train_video_ids and is then applied to the full dataset.
-- Anything that depends on time (sound popularity, follower count, video count,
-  "previous video" stats) uses strictly past data relative to each video's
-  publish date.
+Leakage rules
+-------------
+- No ``engagement_daily`` column is ever used as a feature.
+- Anything learned from data (fill values, creator medians, top hashtags, category
+  levels) is computed on the train split only and then applied to all videos.
+- Anything time-dependent (posting history, follower counts, sound popularity) uses
+  only data from before the video's publish time.
 """
 
 from __future__ import annotations
 
+import json
 import re
-from collections import Counter
 from collections.abc import Collection
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-# ------------------------------------------------------------------ #
-# Emoji regex — covers the most common Unicode emoji ranges           #
-# ------------------------------------------------------------------ #
-_EMOJI_RE = re.compile(
-    "["
-    "\U0001F600-\U0001F64F"
-    "\U0001F300-\U0001F5FF"
-    "\U0001F680-\U0001F6FF"
-    "\U0001F1E0-\U0001F1FF"
-    "\U00002702-\U000027B0"
-    "\U000024C2-\U0001F251"
-    "\U0001F004-\U0001F0CF"
-    "\U0001F910-\U0001F9FF"
-    "]",
-    re.UNICODE,
+EMOTIONS = ["anger", "joy", "surprise", "sadness", "disgust", "fear"]
+CREATOR_DAILY_COLS = ["follower_count", "following_count", "total_favorited", "video_count"]
+CATEGORICAL = ["ratio", "topic", "music_source", "dominant_emotion"]
+VS_CREATOR_BASE = [
+    "duration_log",
+    "desc_len_log",
+    "n_hashtags",
+    "sticker_len_log",
+    "log_hours_since_prev",
+    "emotion_max",
+    "sound_prev_uses_log",
+]
+META_COLUMNS = [
+    "video_id",
+    "author_id",
+    "split",
+    "create_dt",
+    "target_abs",
+    "target_rel",
+    "creator_baseline",
+]
+ORIGINAL_SOUND_PATTERN = "original sound|оригінальний звук|son original|sonido original"
+EMOJI_PATTERN = (
+    "[\U0001f600-\U0001f64f\U0001f300-\U0001f5ff\U0001f680-\U0001f6ff"
+    "\U0001f1e0-\U0001f1ff\U00002702-\U000027b0\U0001f900-\U0001f9ff"
+    "\U0001fa70-\U0001faff\U00002600-\U000026ff]"
 )
 
-# ------------------------------------------------------------------ #
-# Feature descriptions (Ukrainian) for SHAP → recommendation layer    #
-# ------------------------------------------------------------------ #
 FEATURE_DESCRIPTIONS: dict[str, str] = {
-    # Group 1 — Format
-    "duration_log": "Тривалість відео у логарифмованих секундах (log1p)",
-    "ratio": "Роздільна здатність відео (540p, 720p тощо)",
-    "created_by_ai": "Чи позначено відео як AI-згенероване (0/1)",
-    "is_ads": "Рекламне відео (0/1); у датасеті завжди 0 — нульова варіативність",
-    # Group 2 — Timing  [create_time likely UTC; no tz marker in data]
-    "publish_hour": "Година публікації (ймовірно UTC, tz невідомий)",
-    "publish_dow": "День тижня публікації (0=Пн, 6=Нд; ймовірно UTC)",
-    "days_since_prev_video": "Кількість днів з попереднього відео цього ж автора",
-    "videos_last_7d": "Кількість відео автора за 7 днів до публікації (не включаючи день публікації)",
-    # Group 3 — Description
-    "desc_len": "Довжина опису відео у символах (0 якщо опис відсутній)",
-    "desc_n_words": "Кількість слів в описі (пробільна токенізація)",
-    "desc_n_emojis": "Кількість емоджі в описі",
-    "desc_n_questions": "Кількість знаків питання в описі",
-    "n_hashtags": "Кількість хештегів (з масиву hashtags, без пропусків)",
-    "has_sticker_text": "Чи є текст на екрані (sticker text) (0/1)",
-    "sticker_text_len": "Довжина тексту на екрані у символах (0 якщо відсутній)",
-    "is_english": "Чи визначено мову опису як англійську (0/1)",
-    # Group 4 — Speech
-    "has_transcript": (
-        "Чи є транскрипт мовлення; відсутність = швидше за все відео без голосу"
-    ),
-    "speaking_rate": "Швидкість мовлення (слів на хвилину); NaN якщо немає транскрипту",
-    "transcript_n_words": "Кількість слів у транскрипті; NaN якщо немає транскрипту",
-    # Group 5 — Hook (proxy; noisy for unformatted transcripts)
-    "hook_first_sentence_len": (
-        "Довжина першого речення транскрипту; NaN якщо немає транскрипту. "
-        "НЕНАДІЙНО: усні транскрипти часто без пунктуації"
-    ),
-    "hook_first_sentence_is_question": (
-        "Чи закінчується перше речення транскрипту на '?'; NaN якщо немає транскрипту. "
-        "НЕНАДІЙНО: та сама причина"
-    ),
-    # Group 6 — Emotions
-    "anger": "Частка гніву в емоційній моделі",
-    "joy": "Частка радості в емоційній моделі",
-    "surprise": "Частка здивування в емоційній моделі",
-    "sadness": "Частка суму в емоційній моделі",
-    "disgust": "Частка огиди в емоційній моделі",
-    "fear": "Частка страху в емоційній моделі",
-    "dominant_emotion": "Домінуюча емоція (назва стовпця з максимальним значенням)",
-    # Group 7 — Topic
-    "topic": "Тематична категорія відео (рядок-категорія)",
-    # Group 8 — Music
-    "music_selected_from": "Звідки обрано музику (проксі шаблону монтажу)",
-    "original_sound": "Чи є звук оригінальним (music_owner_id == author_id) (0/1)",
-    "sound_popularity": (
-        "Кількість відео з тим же music_id, опублікованих СТРОГО ДО цього відео "
-        "(тільки минуле — немає leakage)"
-    ),
-    # Group 9 — Hashtag indicators (keys added dynamically: hashtag_{name})
-    # Group 10 — Creator context
-    "follower_count_log": "Кількість підписників на момент публікації (log1p, as-of join)",
-    "video_count_at_publish": "Загальна кількість відео автора на момент публікації (as-of join)",
+    "duration_log": "Video duration, log1p(seconds)",
+    "is_english": "Description language detected as English (0/1)",
+    "created_by_ai": "Video marked as AI-generated (0/1)",
+    "publish_hour": "Publish hour (timezone unknown, likely UTC)",
+    "publish_dow": "Publish day of week (0 = Monday)",
+    "is_weekend": "Published on Saturday or Sunday (0/1)",
+    "hour_sin": "Publish hour, cyclic encoding (sin)",
+    "hour_cos": "Publish hour, cyclic encoding (cos)",
+    "dow_sin": "Publish day of week, cyclic encoding (sin)",
+    "dow_cos": "Publish day of week, cyclic encoding (cos)",
+    "log_hours_since_prev": "Hours since the creator's previous video, log1p",
+    "is_first_in_window": "First video of the creator in the dataset window (0/1)",
+    "videos_prev_1d": "Creator's videos in the 24 hours before this one",
+    "videos_prev_7d": "Creator's videos in the 7 days before this one",
+    "followers_log": "Followers at publish time, log1p",
+    "following_log": "Accounts the creator follows at publish time, log1p",
+    "total_likes_log": "Creator's total likes at publish time, log1p",
+    "creator_videos_log": "Creator's total video count at publish time, log1p",
+    "likes_per_follower_log": "Total likes per follower at publish time, log scale",
+    "follower_growth_7d": "Follower growth over the 7 days before publishing, log scale",
+    "has_desc": "Video has a description (0/1)",
+    "desc_len_log": "Description length in characters, log1p",
+    "desc_n_words": "Words in the description",
+    "desc_n_emojis": "Emojis in the description",
+    "desc_n_mentions": "@-mentions in the description",
+    "desc_has_question": "Description contains a question mark (0/1)",
+    "n_hashtags": "Number of hashtags",
+    "has_sticker_text": "Video has on-screen text (0/1)",
+    "sticker_len_log": "On-screen text length in characters, log1p",
+    "has_transcript": "Video has a speech transcript (0/1)",
+    "anger": "Anger score of the content",
+    "joy": "Joy score of the content",
+    "surprise": "Surprise score of the content",
+    "sadness": "Sadness score of the content",
+    "disgust": "Disgust score of the content",
+    "fear": "Fear score of the content",
+    "emotion_missing": "Emotion scores were missing and filled (0/1)",
+    "emotion_entropy": "How mixed the emotional tone is (entropy)",
+    "emotion_max": "Strength of the dominant emotion",
+    "original_sound": "Creator's own original sound (0/1)",
+    "sound_prev_uses_log": "Earlier uses of this sound in the dataset, log1p",
+    "sound_prev_authors_log": "Earlier distinct creators using this sound, log1p",
+    "sound_prev_7d_log": "Uses of this sound in the previous 7 days, log1p",
+    "creator_reused_sound": "Creator has used this sound before (0/1)",
 }
 
 
-# ------------------------------------------------------------------ #
-# Helpers                                                              #
-# ------------------------------------------------------------------ #
+@dataclass
+class FeatureSelection:
+    """Result of :func:`select_features`."""
 
-def _extract_hashtag_names(hval) -> list[str]:
-    """Return lowercase hashtag_name strings from one cell of the hashtags column."""
-    if hval is None:
+    features: list[str]
+    groups: dict[str, list[str]]
+    zero_variance: list[str]
+    redundant: list[str]
+    pairs: pd.Series
+
+
+def describe_feature(name: str) -> str:
+    """Human-readable description, including generated hashtag and one-hot columns."""
+    if name in FEATURE_DESCRIPTIONS:
+        return FEATURE_DESCRIPTIONS[name]
+    if name.endswith("_vs_creator"):
+        base = name[: -len("_vs_creator")]
+        return f"{describe_feature(base)}, relative to the creator's usual value"
+    if name.startswith("ht_"):
+        return f"Video uses hashtag #{name[3:]} (0/1)"
+    for cat in CATEGORICAL:
+        if name.startswith(f"{cat}_"):
+            return f"{cat} is {name[len(cat) + 1:]} (0/1)"
+    return name
+
+
+def to_datetime_any(s: pd.Series) -> pd.Series:
+    """Parse timestamps given either as date strings or as unix seconds/milliseconds."""
+    num = pd.to_numeric(s, errors="coerce")
+    if num.notna().mean() > 0.9:
+        unit = "ms" if num.median() > 1e11 else "s"
+        return pd.to_datetime(num, unit=unit, errors="coerce")
+    return pd.to_datetime(s, errors="coerce", utc=True).dt.tz_convert(None)
+
+
+def _to_seconds(dt: pd.Series) -> np.ndarray:
+    return (dt - pd.Timestamp("1970-01-01")).dt.total_seconds().to_numpy().astype("int64")
+
+
+def count_prev_in_window(
+    frame: pd.DataFrame, group_col: str, time_col: str, days: int
+) -> pd.Series:
+    """For each row, count rows of the same group published in the ``days`` before it."""
+    codes = frame[group_col].astype("category").cat.codes.to_numpy().astype("int64")
+    key = codes * 10**10 + _to_seconds(frame[time_col])
+    order = np.argsort(key, kind="stable")
+    sorted_key = key[order]
+    left = np.searchsorted(sorted_key, sorted_key - days * 86_400, side="left")
+    counts = np.empty(len(key), dtype="int64")
+    counts[order] = np.arange(len(key)) - left
+    return pd.Series(counts, index=frame.index)
+
+
+def rare_to_other(s: pd.Series, train_mask: pd.Series, min_share: float = 0.01) -> pd.Series:
+    """Replace categories rarer than ``min_share`` on train with ``"other"``."""
+    share = s[train_mask].value_counts(normalize=True)
+    keep = share[share >= min_share].index
+    return s.where(s.isin(keep), "other")
+
+
+def hashtag_names(cell) -> list[str]:
+    """Lowercase hashtag names from one cell of the ``hashtags`` column."""
+    if cell is None or isinstance(cell, float):
         return []
-    if not hasattr(hval, "__iter__") or isinstance(hval, str):
-        return []
-    out = []
-    for item in hval:
-        if isinstance(item, dict):
-            name = item.get("hashtag_name", "")
-            if name:
-                out.append(str(name).lower())
-    return out
+    if isinstance(cell, str):
+        return [t.lower() for t in re.findall(r"#?(\w+)", cell)]
+    names = []
+    for item in cell:
+        name = item.get("hashtag_name") if isinstance(item, dict) else item
+        if isinstance(name, str) and name.strip():
+            names.append(name.strip().lower())
+    return names
 
 
-# ------------------------------------------------------------------ #
-# Group 1 — Format                                                     #
-# ------------------------------------------------------------------ #
-
-def format_features(videos: pd.DataFrame) -> pd.DataFrame:
-    """1. Format: log1p(duration), ratio, created_by_ai, is_ads."""
-    out = videos[["video_id"]].copy()
-    out["duration_log"] = np.log1p(videos["duration"].astype(float))
-    out["ratio"] = videos["ratio"]
-    out["created_by_ai"] = videos["created_by_ai"].fillna(0).astype(np.int8)
-    # is_ads is always 0 in this dataset; included for completeness
-    out["is_ads"] = pd.to_numeric(videos["is_ads"], errors="coerce").fillna(0).astype(np.int8)
-    return out
+def _train_mask(df: pd.DataFrame) -> pd.Series:
+    return df["split"].eq("train")
 
 
-# ------------------------------------------------------------------ #
-# Group 2 — Timing                                                     #
-# ------------------------------------------------------------------ #
-
-def timing_features(videos: pd.DataFrame) -> pd.DataFrame:
-    """2. Timing: hour, day-of-week, days_since_prev_video, videos_last_7d.
-
-    create_time contains no timezone marker; values are treated as-is (likely UTC).
-    days_since_prev_video and videos_last_7d use only strictly past data per creator.
-    """
-    out = videos[["video_id", "author_id"]].copy()
-    dt = pd.to_datetime(videos["create_time"], errors="coerce")
-    out["publish_hour"] = dt.dt.hour.astype("Int8")
-    out["publish_dow"] = dt.dt.dayofweek.astype("Int8")
-    out["_dt"] = pd.to_datetime(videos["create_date"], errors="coerce")
-
-    # Sort by (author_id, date) for temporal ops
-    out = out.sort_values(["author_id", "_dt"]).reset_index(drop=True)
-
-    # days_since_prev_video — shift(1) within each author group
-    prev_dt = out.groupby("author_id")["_dt"].shift(1)
-    out["days_since_prev_video"] = (out["_dt"] - prev_dt).dt.days
-
-    # videos_last_7d — count author's videos published in [dt-7d, dt)
-    def _last7d(group: pd.DataFrame) -> pd.Series:
-        dt_arr = group["_dt"].values.astype("datetime64[D]")
-        window = np.timedelta64(7, "D")
-        counts = np.empty(len(dt_arr), dtype=np.int32)
-        for i in range(len(dt_arr)):
-            left = np.searchsorted(dt_arr, dt_arr[i] - window, side="left")
-            counts[i] = i - left  # i videos before index i within the window
-        return pd.Series(counts, index=group.index)
-
-    out["videos_last_7d"] = out.groupby("author_id", group_keys=False).apply(_last7d)
-
-    return out[["video_id", "publish_hour", "publish_dow",
-                "days_since_prev_video", "videos_last_7d"]]
+def add_time_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Add parsed ``create_dt`` / ``create_day`` and sort by creator and publish time."""
+    out = df.copy()
+    out["create_dt"] = to_datetime_any(out["create_time"])
+    out["create_day"] = pd.to_datetime(out["create_date"], errors="coerce")
+    return out.sort_values(["author_id", "create_dt"]).reset_index(drop=True)
 
 
-# ------------------------------------------------------------------ #
-# Group 3 — Description                                                #
-# ------------------------------------------------------------------ #
-
-def description_features(videos: pd.DataFrame) -> pd.DataFrame:
-    """3. Description: desc_len, n_words, n_emojis, n_questions, n_hashtags,
-    has_sticker_text, sticker_text_len, is_english.
-    All computed fresh; no imputed nulls (null desc treated as empty string).
-    """
-    desc = videos["desc"].fillna("").astype(str)
-    sticker = videos["sticker_text"]
-
-    out = videos[["video_id"]].copy()
-    out["desc_len"] = desc.str.len().astype(np.int32)
-    out["desc_n_words"] = desc.str.split().str.len().fillna(0).astype(np.int32)
-    out["desc_n_emojis"] = desc.apply(lambda t: len(_EMOJI_RE.findall(t))).astype(np.int16)
-    out["desc_n_questions"] = desc.str.count(r"\?").astype(np.int16)
-    out["n_hashtags"] = (
-        videos["hashtags"]
-        .apply(lambda h: len(h) if hasattr(h, "__len__") and not isinstance(h, str) else 0)
-        .astype(np.int16)
-    )
-    out["has_sticker_text"] = sticker.notna().astype(np.int8)
-    out["sticker_text_len"] = (
-        sticker.fillna("").str.len().astype(np.int32)
-    )
-    out["is_english"] = videos["is_english"].fillna(0).astype(np.int8)
-    return out
+def add_format_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    out = df.copy()
+    out["duration_log"] = np.log1p(out["duration"].clip(lower=0))
+    out["is_english"] = out["is_english"].fillna(0).astype("int8")
+    out["created_by_ai"] = out["created_by_ai"].fillna(0).astype("int8")
+    return out, ["duration_log", "is_english", "created_by_ai"]
 
 
-# ------------------------------------------------------------------ #
-# Group 4 — Speech                                                     #
-# ------------------------------------------------------------------ #
-
-def speech_features(videos: pd.DataFrame) -> pd.DataFrame:
-    """4. Speech: has_transcript, speaking_rate, transcript_n_words.
-    Nulls preserved — XGBoost handles them natively.
-    """
-    transcript = videos["transcript"]
-    out = videos[["video_id"]].copy()
-    out["has_transcript"] = transcript.notna().astype(np.int8)
-    out["speaking_rate"] = pd.to_numeric(videos["speaking_rate"], errors="coerce")
-    out["transcript_n_words"] = transcript.str.split().str.len()
-    return out
+def add_timing_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    out = df.copy()
+    out["publish_hour"] = out["create_dt"].dt.hour
+    out["publish_dow"] = out["create_dt"].dt.dayofweek
+    out["is_weekend"] = (out["publish_dow"] >= 5).astype("int8")
+    out["hour_sin"] = np.sin(2 * np.pi * out["publish_hour"] / 24)
+    out["hour_cos"] = np.cos(2 * np.pi * out["publish_hour"] / 24)
+    out["dow_sin"] = np.sin(2 * np.pi * out["publish_dow"] / 7)
+    out["dow_cos"] = np.cos(2 * np.pi * out["publish_dow"] / 7)
+    cols = ["publish_hour", "publish_dow", "is_weekend", "hour_sin", "hour_cos", "dow_sin"]
+    return out, cols + ["dow_cos"]
 
 
-# ------------------------------------------------------------------ #
-# Group 5 — Hook (proxy; noisy for unpunctuated transcripts)           #
-# ------------------------------------------------------------------ #
-
-_SENT_SPLIT_RE = re.compile(r"[.!?]+")
-
-
-def hook_features(videos: pd.DataFrame) -> pd.DataFrame:
-    """5. Hook: length and question-flag for first transcript sentence.
-
-    Reliability caveat: spoken transcripts typically lack punctuation, so
-    "sentence" splitting is coarse — the entire transcript may appear as one
-    sentence. Treat these features as weak proxies.
-    """
-    def _first_sent(text: str | float) -> str | None:
-        if not isinstance(text, str) or not text.strip():
-            return None
-        parts = _SENT_SPLIT_RE.split(text.strip())
-        return parts[0].strip() if parts else None
-
-    first = videos["transcript"].apply(_first_sent)
-    out = videos[["video_id"]].copy()
-    out["hook_first_sentence_len"] = first.str.len()
-    out["hook_first_sentence_is_question"] = (
-        videos["transcript"]
-        .apply(lambda t: int(bool(isinstance(t, str) and t.strip().endswith("?")))
-               if isinstance(t, str) else None)
-    )
-    return out
+def add_posting_history_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    out = df.copy()
+    ordered = out.sort_values(["author_id", "create_dt"])
+    prev_dt = ordered.groupby("author_id")["create_dt"].shift(1).reindex(out.index)
+    hours = (out["create_dt"] - prev_dt).dt.total_seconds() / 3600
+    out["log_hours_since_prev"] = np.log1p(hours.clip(lower=0))
+    out["is_first_in_window"] = hours.isna().astype("int8")
+    out["videos_prev_1d"] = count_prev_in_window(out, "author_id", "create_dt", 1)
+    out["videos_prev_7d"] = count_prev_in_window(out, "author_id", "create_dt", 7)
+    return out, ["log_hours_since_prev", "is_first_in_window", "videos_prev_1d", "videos_prev_7d"]
 
 
-# ------------------------------------------------------------------ #
-# Group 6 — Emotions                                                   #
-# ------------------------------------------------------------------ #
-
-_EMOTION_COLS = ["anger", "joy", "surprise", "sadness", "disgust", "fear"]
-
-
-def emotion_features(videos: pd.DataFrame) -> pd.DataFrame:
-    """6. Emotions: 6 scores (existing) + dominant_emotion (argmax of scores)."""
-    out = videos[["video_id"]].copy()
-    for col in _EMOTION_COLS:
-        out[col] = pd.to_numeric(videos[col], errors="coerce")
-    em_vals = out[_EMOTION_COLS].to_numpy(dtype=float, na_value=np.nan)
-    null_rows = np.all(np.isnan(em_vals), axis=1)
-    # Replace NaN with -inf so argmax ignores them; null_rows flagged separately
-    em_safe = np.where(np.isnan(em_vals), -np.inf, em_vals)
-    dom_idx = np.argmax(em_safe, axis=1)
-    dom = np.array([_EMOTION_COLS[i] for i in dom_idx], dtype=object)
-    dom[null_rows] = None
-    out["dominant_emotion"] = dom
-    return out
-
-
-# ------------------------------------------------------------------ #
-# Group 7 — Topic                                                      #
-# ------------------------------------------------------------------ #
-
-def topic_features(videos: pd.DataFrame) -> pd.DataFrame:
-    """7. Topic: the pre-extracted topic category string."""
-    return videos[["video_id", "topic"]].copy()
-
-
-# ------------------------------------------------------------------ #
-# Group 8 — Music                                                      #
-# ------------------------------------------------------------------ #
-
-def music_features(videos: pd.DataFrame) -> pd.DataFrame:
-    """8. Music: music_selected_from, original_sound, sound_popularity.
-
-    sound_popularity: number of videos in this dataset that used the same
-    music_id STRICTLY BEFORE this video's publish date (no same-day counts).
-    """
-    out = videos[["video_id"]].copy()
-    out["music_selected_from"] = videos["music_selected_from"]
-
-    # original_sound: 1 when music_owner_id == author_id (creator's own sound)
-    own_music = videos["music_owner_id"].fillna("") == videos["author_id"].fillna("_na_")
-    out["original_sound"] = own_music.astype(np.int8)
-
-    # sound_popularity: cumulative past usage of the same music_id
-    sounds = videos[["video_id", "music_id", "create_date"]].copy()
-    sounds["_dt"] = pd.to_datetime(sounds["create_date"], errors="coerce")
-
-    music_daily = (
-        sounds.dropna(subset=["_dt", "music_id"])
-        .groupby(["music_id", "_dt"])
-        .size()
-        .reset_index(name="_n")
-        .sort_values(["music_id", "_dt"])
-    )
-    music_daily["_cum"] = music_daily.groupby("music_id")["_n"].cumsum()
-    # popularity before this day = cumsum_through_today - n_today
-    music_daily["popularity_before"] = music_daily["_cum"] - music_daily["_n"]
-
-    sounds = sounds.merge(
-        music_daily[["music_id", "_dt", "popularity_before"]],
-        on=["music_id", "_dt"],
-        how="left",
-    )
-    out["sound_popularity"] = sounds["popularity_before"].fillna(0).astype(np.int32).values
-    return out
-
-
-# ------------------------------------------------------------------ #
-# Group 9 — Hashtag indicators (train-only top-20)                    #
-# ------------------------------------------------------------------ #
-
-def hashtag_indicator_features(
-    videos: pd.DataFrame,
-    train_video_ids: Collection[str] | None = None,
+def _asof_snapshot(
+    keys: pd.DataFrame, snapshots: pd.DataFrame, lag_days: int, strict: bool
 ) -> pd.DataFrame:
-    """9. Binary indicators for top-20 hashtags determined on train only.
-
-    If train_video_ids is None, top-20 are computed on all videos (for use
-    without a train/test split, e.g. diagnostics).
-    """
-    if train_video_ids is not None:
-        train_set = frozenset(train_video_ids)
-        train_videos = videos[videos["video_id"].isin(train_set)]
-    else:
-        train_videos = videos
-
-    all_tags: list[str] = []
-    for hval in train_videos["hashtags"]:
-        all_tags.extend(_extract_hashtag_names(hval))
-    top20 = [tag for tag, _ in Counter(all_tags).most_common(20)]
-
-    video_tags = videos["hashtags"].apply(_extract_hashtag_names)
-    out = videos[["video_id"]].copy()
-    for tag in top20:
-        out[f"hashtag_{tag}"] = video_tags.apply(lambda ts, t=tag: int(t in ts)).astype(np.int8)
-
-    # Store chosen tags for downstream use (not a column — just metadata)
-    out.attrs["top_hashtags"] = top20
-    return out
-
-
-# ------------------------------------------------------------------ #
-# Group 10 — Creator context (as-of join, no look-ahead)              #
-# ------------------------------------------------------------------ #
-
-def creator_context_features(
-    videos: pd.DataFrame,
-    creator_daily: pd.DataFrame,
-) -> pd.DataFrame:
-    """10. log1p(follower_count_at_publish) and video_count_at_publish.
-
-    Both use a backward as-of join on creator_daily: for each video, finds
-    the most recent snapshot dated on or before the video's publish date.
-    No future data is used.
-    """
-    vids = videos[["video_id", "author_id", "create_date"]].copy()
-    vids["_vdt"] = pd.to_datetime(vids["create_date"], errors="coerce")
-    vids_s = vids.dropna(subset=["_vdt"]).sort_values("_vdt")
-
-    crd = creator_daily[["author_id", "date", "follower_count", "video_count"]].copy()
-    crd["_cdt"] = pd.to_datetime(crd["date"], errors="coerce")
-    crd_s = crd.dropna(subset=["_cdt"]).sort_values("_cdt")
-
+    left = (
+        keys.assign(lookup_day=keys["create_day"] - pd.Timedelta(days=lag_days))
+        .dropna(subset=["lookup_day"])
+        .sort_values("lookup_day")
+    )
     merged = pd.merge_asof(
-        vids_s,
-        crd_s[["author_id", "_cdt", "follower_count", "video_count"]],
-        left_on="_vdt",
-        right_on="_cdt",
+        left,
+        snapshots,
+        left_on="lookup_day",
+        right_on="snap_day",
         by="author_id",
         direction="backward",
+        allow_exact_matches=not strict,
     )
-    merged["follower_count_log"] = np.log1p(
-        pd.to_numeric(merged["follower_count"], errors="coerce").clip(lower=0)
-    )
-    merged["video_count_at_publish"] = pd.to_numeric(
-        merged["video_count"], errors="coerce"
-    )
-    result = videos[["video_id"]].merge(
-        merged[["video_id", "follower_count_log", "video_count_at_publish"]],
-        on="video_id",
-        how="left",
-    )
-    return result
+    return merged.set_index("video_id")[CREATOR_DAILY_COLS]
 
 
-# ------------------------------------------------------------------ #
-# follower_asof_join — kept for backward compatibility (notebook 02)  #
-# ------------------------------------------------------------------ #
+def add_creator_context_features(
+    df: pd.DataFrame, creator_daily: pd.DataFrame
+) -> tuple[pd.DataFrame, list[str]]:
+    """Creator account state from the last snapshot strictly before the publish day.
 
-def follower_asof_join(
-    videos: pd.DataFrame,
-    creator_daily: pd.DataFrame,
-) -> pd.DataFrame:
-    """Add ``follower_count_at_publish`` to ``videos`` via a look-ahead-free join.
-
-    For each video, finds the most recent ``creator_daily`` row where
-    ``date <= create_date`` (backward as-of join).  No future data is used.
+    Falls back to the same-day snapshot only when no earlier one exists.
     """
-    vids = videos[["video_id", "author_id", "create_date"]].copy()
-    vids["_create_dt"] = pd.to_datetime(vids["create_date"], errors="coerce")
-    vids_sorted = vids.dropna(subset=["_create_dt"]).sort_values("_create_dt")
+    out = df.copy()
+    snaps = creator_daily.copy()
+    snaps["snap_day"] = pd.to_datetime(snaps["date"], errors="coerce")
+    snaps = snaps.dropna(subset=["snap_day"]).sort_values("snap_day")
+    snaps = snaps[["author_id", "snap_day"] + CREATOR_DAILY_COLS]
 
-    crd = creator_daily[["author_id", "date", "follower_count"]].copy()
-    crd["_date_dt"] = pd.to_datetime(crd["date"], errors="coerce")
-    crd_sorted = crd.dropna(subset=["_date_dt"]).sort_values("_date_dt")
-
-    merged = pd.merge_asof(
-        vids_sorted,
-        crd_sorted[["author_id", "_date_dt", "follower_count"]],
-        left_on="_create_dt",
-        right_on="_date_dt",
-        by="author_id",
-        direction="backward",
+    keys = out[["video_id", "author_id", "create_day"]]
+    snap = _asof_snapshot(keys, snaps, 0, strict=True).combine_first(
+        _asof_snapshot(keys, snaps, 0, strict=False)
     )
-    return videos.merge(
-        merged[["video_id", "follower_count"]].rename(
-            columns={"follower_count": "follower_count_at_publish"}
-        ),
-        on="video_id",
-        how="left",
+    snap_7d = _asof_snapshot(keys, snaps, 7, strict=False)
+
+    at_publish = {c: out["video_id"].map(snap[c]).clip(lower=0) for c in CREATOR_DAILY_COLS}
+    followers_7d = out["video_id"].map(snap_7d["follower_count"]).clip(lower=0)
+
+    out["followers_log"] = np.log1p(at_publish["follower_count"])
+    out["following_log"] = np.log1p(at_publish["following_count"])
+    out["total_likes_log"] = np.log1p(at_publish["total_favorited"])
+    out["creator_videos_log"] = np.log1p(at_publish["video_count"])
+    out["likes_per_follower_log"] = out["total_likes_log"] - out["followers_log"]
+    out["follower_growth_7d"] = out["followers_log"] - np.log1p(followers_7d)
+    cols = [
+        "followers_log",
+        "following_log",
+        "total_likes_log",
+        "creator_videos_log",
+        "likes_per_follower_log",
+        "follower_growth_7d",
+    ]
+    return out, cols
+
+
+def add_description_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Description, hashtag count and on-screen text features.
+
+    Also adds the helper columns ``hashtag_list`` / ``hashtag_set`` (not features).
+    """
+    out = df.copy()
+    desc = out["desc"].fillna("").astype(str)
+    sticker = out["sticker_text"].fillna("").astype(str)
+
+    out["has_desc"] = desc.str.strip().ne("").astype("int8")
+    out["desc_len_log"] = np.log1p(desc.str.len())
+    out["desc_n_words"] = desc.str.split().str.len().fillna(0)
+    out["desc_n_emojis"] = desc.str.count(EMOJI_PATTERN)
+    out["desc_n_mentions"] = desc.str.count(r"@\w+")
+    out["desc_has_question"] = desc.str.contains("?", regex=False).astype("int8")
+
+    out["hashtag_list"] = out["hashtags"].apply(hashtag_names)
+    out["hashtag_set"] = out["hashtag_list"].apply(set)
+    out["n_hashtags"] = out["hashtag_list"].str.len()
+
+    out["has_sticker_text"] = out["sticker_text"].notna().astype("int8")
+    out["sticker_len_log"] = np.log1p(sticker.str.len())
+    cols = [
+        "has_desc",
+        "desc_len_log",
+        "desc_n_words",
+        "desc_n_emojis",
+        "desc_n_mentions",
+        "desc_has_question",
+        "n_hashtags",
+        "has_sticker_text",
+        "sticker_len_log",
+    ]
+    return out, cols
+
+
+def add_transcript_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Only ``has_transcript``.
+
+    The precomputed text statistics (``word_count``, ``speaking_rate`` and others) are
+    not used: their missingness depends on the publish month (fully missing from
+    October 2024), so they encode the data-collection batch, not the content.
+    """
+    out = df.copy()
+    out["has_transcript"] = out["transcript"].notna().astype("int8")
+    return out, ["has_transcript"]
+
+
+def add_emotion_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    out = df.copy()
+    train = _train_mask(out)
+    out["emotion_missing"] = out[EMOTIONS].isna().any(axis=1).astype("int8")
+    out[EMOTIONS] = out[EMOTIONS].fillna(out.loc[train, EMOTIONS].mean())
+
+    probs = out[EMOTIONS].clip(lower=1e-9)
+    probs = probs.div(probs.sum(axis=1), axis=0)
+    out["emotion_entropy"] = -(probs * np.log(probs)).sum(axis=1)
+    out["emotion_max"] = out[EMOTIONS].max(axis=1)
+    out["dominant_emotion"] = out[EMOTIONS].idxmax(axis=1)
+    return out, EMOTIONS + ["emotion_missing", "emotion_entropy", "emotion_max"]
+
+
+def sound_history(all_videos: pd.DataFrame) -> pd.DataFrame:
+    """Past-only usage statistics of each video's sound, over the full videos table."""
+    mus = all_videos[["video_id", "author_id", "music_id", "create_time"]].copy()
+    mus["create_dt"] = to_datetime_any(mus["create_time"])
+    mus = mus.dropna(subset=["music_id", "create_dt"])
+    mus = mus.sort_values(["music_id", "create_dt"]).reset_index(drop=True)
+
+    first_use = (~mus.duplicated(["music_id", "author_id"])).astype(int)
+    mus["sound_prev_uses"] = mus.groupby("music_id").cumcount()
+    mus["sound_prev_authors"] = first_use.groupby(mus["music_id"]).cumsum() - first_use
+    mus["creator_reused_sound"] = (1 - first_use).astype("int8")
+    mus["sound_prev_7d"] = count_prev_in_window(mus, "music_id", "create_dt", 7)
+    cols = ["sound_prev_uses", "sound_prev_authors", "creator_reused_sound", "sound_prev_7d"]
+    return mus.set_index("video_id")[cols]
+
+
+def add_music_features(
+    df: pd.DataFrame, all_videos: pd.DataFrame | None = None
+) -> tuple[pd.DataFrame, list[str]]:
+    """Sound features; popularity is counted over ``all_videos`` (default: ``df``)."""
+    out = df.copy()
+    owner = out["music_owner_id"].fillna("").astype(str)
+    title = out["music_title"].fillna("").astype(str).str.lower()
+    out["music_source"] = out["music_selected_from"].fillna("unknown").astype(str)
+    out["original_sound"] = (
+        owner.eq(out["author_id"].astype(str)) | title.str.contains(ORIGINAL_SOUND_PATTERN)
+    ).astype("int8")
+
+    history = sound_history(df if all_videos is None else all_videos)
+    for c in ["sound_prev_uses", "sound_prev_authors", "sound_prev_7d"]:
+        out[f"{c}_log"] = np.log1p(out["video_id"].map(history[c]).fillna(0))
+    reused = out["video_id"].map(history["creator_reused_sound"])
+    out["creator_reused_sound"] = reused.fillna(0).astype("int8")
+    cols = [
+        "original_sound",
+        "sound_prev_uses_log",
+        "sound_prev_authors_log",
+        "sound_prev_7d_log",
+        "creator_reused_sound",
+    ]
+    return out, cols
+
+
+def top_hashtags(df: pd.DataFrame, top_n: int = 25) -> pd.Series:
+    """Hashtags used by the most distinct creators on train."""
+    train_tags = (
+        df.loc[_train_mask(df), ["author_id", "hashtag_list"]]
+        .explode("hashtag_list")
+        .dropna()
+        .drop_duplicates()
     )
+    return train_tags["hashtag_list"].value_counts().head(top_n)
 
 
-# ------------------------------------------------------------------ #
-# Main entry point                                                     #
-# ------------------------------------------------------------------ #
+def add_hashtag_features(
+    df: pd.DataFrame, top_n: int = 25
+) -> tuple[pd.DataFrame, list[str], dict[str, str]]:
+    """Multi-hot ``ht_<tag>`` columns for the top hashtags (by distinct train creators)."""
+    out = df.copy()
+    mapping: dict[str, str] = {}
+    for tag in top_hashtags(out, top_n).index:
+        col = "ht_" + re.sub(r"\W+", "_", tag).strip("_")
+        while col in mapping.values() or col in out.columns:
+            col += "_"
+        mapping[tag] = col
+        out[col] = out["hashtag_set"].apply(lambda s, t=tag: t in s).astype("int8")
+    return out, list(mapping.values()), mapping
+
+
+def impute_numeric(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    """Fill NaN with the creator's train median, falling back to the global train median."""
+    out = df.copy()
+    train = _train_mask(out)
+    creator_med = out.loc[train].groupby("author_id")[cols].median()
+    fill = (
+        creator_med.reindex(out["author_id"])
+        .fillna(out.loc[train, cols].median())
+        .set_axis(out.index)
+    )
+    out[cols] = out[cols].fillna(fill)
+    return out
+
+
+def add_vs_creator_features(
+    df: pd.DataFrame, base_cols: list[str] | None = None
+) -> tuple[pd.DataFrame, list[str]]:
+    """``<feature>_vs_creator`` = value minus the creator's train median of that feature."""
+    out = df.copy()
+    base = VS_CREATOR_BASE if base_cols is None else base_cols
+    train = _train_mask(out)
+    ref = (
+        out.loc[train]
+        .groupby("author_id")[base]
+        .median()
+        .reindex(out["author_id"])
+        .fillna(out.loc[train, base].median())
+        .set_axis(out.index)
+    )
+    names = []
+    for c in base:
+        out[f"{c}_vs_creator"] = out[c] - ref[c]
+        names.append(f"{c}_vs_creator")
+    return out, names
+
+
+def add_categorical_features(
+    df: pd.DataFrame, cols: list[str] | None = None, min_share: float = 0.01
+) -> tuple[pd.DataFrame, dict[str, list[str]], dict[str, list[str]]]:
+    """One-hot encode categoricals; levels rarer than ``min_share`` on train -> ``other``."""
+    out = df.copy()
+    cats = CATEGORICAL if cols is None else cols
+    train = _train_mask(out)
+    groups: dict[str, list[str]] = {}
+    levels: dict[str, list[str]] = {}
+    for c in cats:
+        out[c] = rare_to_other(out[c].fillna("unknown").astype(str), train, min_share)
+        levels[c] = sorted(out.loc[train, c].unique().tolist())
+        categories = levels[c] + ([] if "other" in levels[c] else ["other"])
+        dummies = pd.get_dummies(
+            pd.Categorical(out[c], categories=categories), prefix=c, dtype="int8"
+        )
+        dummies.columns = [re.sub(r"\W+", "_", col).strip("_") for col in dummies.columns]
+        dummies.index = out.index
+        out = pd.concat([out, dummies], axis=1)
+        groups[f"cat_{c}"] = dummies.columns.tolist()
+    return out, groups, levels
+
+
+def select_features(
+    df: pd.DataFrame,
+    groups: dict[str, list[str]],
+    threshold: float = 0.95,
+    keep_priority: Collection[str] = (),
+) -> FeatureSelection:
+    """Drop zero-variance features and one feature of each near-duplicate pair.
+
+    A pair is near-duplicate when |Spearman rho| on train exceeds ``threshold``. The
+    later feature of the pair is dropped, unless it is listed in ``keep_priority``.
+    """
+    train = _train_mask(df)
+    all_features = [c for cols in groups.values() for c in cols]
+    zero_var = [c for c in all_features if df.loc[train, c].nunique() <= 1]
+    candidates = [c for c in all_features if c not in zero_var]
+
+    corr = df.loc[train, candidates].corr(method="spearman").abs()
+    upper = corr.where(np.triu(np.ones(corr.shape, dtype=bool), k=1))
+    pairs = upper.stack()
+    pairs = pairs[pairs > threshold].sort_values(ascending=False).rename("abs_spearman")
+
+    redundant: list[str] = []
+    for a, b in pairs.index:
+        if a in redundant or b in redundant:
+            continue
+        redundant.append(a if b in keep_priority and a not in keep_priority else b)
+
+    features = [c for c in candidates if c not in redundant]
+    kept = {g: [c for c in cols if c in features] for g, cols in groups.items()}
+    kept = {g: cols for g, cols in kept.items() if cols}
+    return FeatureSelection(features, kept, zero_var, redundant, pairs)
+
+
+def build_feature_table(
+    df: pd.DataFrame,
+    creator_daily: pd.DataFrame,
+    all_videos: pd.DataFrame | None = None,
+    top_n_hashtags: int = 25,
+    rare_min_share: float = 0.01,
+    redundancy_threshold: float = 0.95,
+    keep_priority: Collection[str] = ("emotion_max",),
+) -> tuple[pd.DataFrame, FeatureSelection, dict]:
+    """Run every feature step on a prepared table (needs ``split``; targets optional).
+
+    Returns the full table, the feature selection and extra metadata
+    (top hashtags and categorical levels) for ``feature_spec.json``.
+    """
+    groups: dict[str, list[str]] = {}
+    out = add_time_columns(df)
+    out, groups["format"] = add_format_features(out)
+    out, groups["timing"] = add_timing_features(out)
+    out, groups["posting_history"] = add_posting_history_features(out)
+    out, groups["creator_context"] = add_creator_context_features(out, creator_daily)
+    out, groups["description"] = add_description_features(out)
+    out, groups["transcript"] = add_transcript_features(out)
+    out, groups["emotions"] = add_emotion_features(out)
+    out, groups["music"] = add_music_features(out, all_videos)
+    out, groups["hashtags"], hashtag_map = add_hashtag_features(out, top_n_hashtags)
+    out = impute_numeric(out, [c for cols in groups.values() for c in cols])
+    out, groups["vs_creator"] = add_vs_creator_features(out)
+    out, cat_groups, levels = add_categorical_features(out, min_share=rare_min_share)
+    groups.update(cat_groups)
+    selection = select_features(out, groups, redundancy_threshold, keep_priority)
+    extra = {"top_hashtags": hashtag_map, "categorical_levels": levels}
+    return out, selection, extra
+
 
 def build_features(
     videos: pd.DataFrame,
     creator_daily: pd.DataFrame,
     train_video_ids: Collection[str] | None = None,
 ) -> pd.DataFrame:
-    """Build all feature groups and return a single DataFrame indexed by video_id.
+    """Feature matrix with ``video_id`` + selected features (used by ``cli.py``).
 
-    Parameters
-    ----------
-    videos :
-        Filtered videos table (after min_videos_per_creator and non-monotonic
-        exclusion).  Must NOT contain engagement_daily columns.
-    creator_daily :
-        Full creator_daily table (as-of join uses all historical rows).
-    train_video_ids :
-        video_ids in the training split.  Required for leakage-safe features
-        (top-hashtag indicators).  If None, all videos are used as proxy train.
-
-    Returns
-    -------
-    pd.DataFrame
-        One row per video_id; columns are features only (no raw text, no IDs
-        other than video_id).
+    ``videos`` must already be filtered. If ``train_video_ids`` is None, all videos
+    are treated as train.
     """
-    groups = [
-        format_features(videos),
-        timing_features(videos),
-        description_features(videos),
-        speech_features(videos),
-        hook_features(videos),
-        emotion_features(videos),
-        topic_features(videos),
-        music_features(videos),
-        hashtag_indicator_features(videos, train_video_ids),
-        creator_context_features(videos, creator_daily),
-    ]
-    result = videos[["video_id"]].copy()
-    for df in groups:
-        result = result.merge(df, on="video_id", how="left")
+    df = videos.copy()
+    train_ids = set(df["video_id"]) if train_video_ids is None else set(train_video_ids)
+    df["split"] = np.where(df["video_id"].isin(train_ids), "train", "test")
+    table, selection, _ = build_feature_table(df, creator_daily)
+    return table[["video_id"] + selection.features].reset_index(drop=True)
 
-    # Dynamically update FEATURE_DESCRIPTIONS for hashtag indicators
-    top_tags = groups[8].attrs.get("top_hashtags", [])
-    for tag in top_tags:
-        key = f"hashtag_{tag}"
-        if key not in FEATURE_DESCRIPTIONS:
-            FEATURE_DESCRIPTIONS[key] = (
-                f"Відео використовує хештег #{tag} (0/1; топ-20 хештеги тільки з train)"
-            )
-    return result
+
+def save_feature_table(
+    df: pd.DataFrame,
+    selection: FeatureSelection,
+    processed_dir: str | Path,
+    spec_extra: dict | None = None,
+) -> dict:
+    """Write ``features.parquet``, ``dataset_index.parquet`` and ``feature_spec.json``.
+
+    ``features.parquet`` holds ``video_id`` + features only; ``dataset_index.parquet``
+    holds ids, split and targets. Returns the spec dict.
+    """
+    out_dir = Path(processed_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    meta = [c for c in META_COLUMNS if c in df.columns]
+    df[["video_id"] + selection.features].to_parquet(out_dir / "features.parquet", index=False)
+    df[meta].to_parquet(out_dir / "dataset_index.parquet", index=False)
+    spec = {
+        "features": selection.features,
+        "groups": selection.groups,
+        "dropped_zero_variance": selection.zero_variance,
+        "dropped_redundant": selection.redundant,
+        "n_videos": int(len(df)),
+        "n_creators": int(df["author_id"].nunique()),
+        **(spec_extra or {}),
+    }
+    with open(out_dir / "feature_spec.json", "w", encoding="utf-8") as f:
+        json.dump(spec, f, ensure_ascii=False, indent=2)
+    return spec
+
+
+def load_feature_table(processed_dir: str | Path) -> tuple[pd.DataFrame, dict]:
+    """Load ids, split, targets and features as one table, plus the feature spec."""
+    in_dir = Path(processed_dir)
+    with open(in_dir / "feature_spec.json", encoding="utf-8") as f:
+        spec = json.load(f)
+    index = pd.read_parquet(in_dir / "dataset_index.parquet")
+    features = pd.read_parquet(in_dir / "features.parquet")
+    return index.merge(features, on="video_id", how="inner"), spec
+
+
+def follower_asof_join(videos: pd.DataFrame, creator_daily: pd.DataFrame) -> pd.DataFrame:
+    """Add ``follower_count_at_publish`` (last snapshot with ``date <= create_date``).
+
+    Kept for notebook 02; the feature pipeline uses the stricter
+    :func:`add_creator_context_features`.
+    """
+    vids = videos[["video_id", "author_id", "create_date"]].copy()
+    vids["_create_dt"] = pd.to_datetime(vids["create_date"], errors="coerce")
+    vids = vids.dropna(subset=["_create_dt"]).sort_values("_create_dt")
+
+    crd = creator_daily[["author_id", "date", "follower_count"]].copy()
+    crd["_date_dt"] = pd.to_datetime(crd["date"], errors="coerce")
+    crd = crd.dropna(subset=["_date_dt"]).sort_values("_date_dt")
+
+    merged = pd.merge_asof(
+        vids,
+        crd[["author_id", "_date_dt", "follower_count"]],
+        left_on="_create_dt",
+        right_on="_date_dt",
+        by="author_id",
+        direction="backward",
+    )
+    fc = merged[["video_id", "follower_count"]].rename(
+        columns={"follower_count": "follower_count_at_publish"}
+    )
+    return videos.merge(fc, on="video_id", how="left")

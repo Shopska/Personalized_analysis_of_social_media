@@ -5,6 +5,7 @@ paths:
   checksums: data/raw/CHECKSUMS.txt
   metrics: results/metrics.json
   experiments_log: results/experiments.md
+  processed_dir: data/processed
 
 data:
   hf_repo: lingbow/tiktok-video-engagement-200k
@@ -16,6 +17,14 @@ data:
   author_column: author_id
   target: null
   min_videos_per_creator: 30
+  target_day: 14
+
+features:
+  top_n_hashtags: 25
+  rare_category_min_share: 0.01
+  redundancy_threshold: 0.95
+  keep_priority:
+    - emotion_max
 
 split:
   test_size: 0.2
