@@ -19,7 +19,7 @@ from typing import Any
 
 import pandas as pd
 
-from creator_analytics.features import FEATURE_DESCRIPTIONS
+from creator_analytics.features import describe_feature
 
 _STABILITY_THRESHOLD = 0.4
 _STABILITY_FALLBACK_N_TRAIN = 150
@@ -75,7 +75,7 @@ def build_shap_context(
     top_feats: list[dict] = []
     for _, row in creator_shap.iterrows():
         fname = row["feature"]
-        raw_label = FEATURE_DESCRIPTIONS.get(fname, fname)
+        raw_label = describe_feature(fname)
         label = raw_label[:60] if len(raw_label) > 60 else raw_label
         direction: str | None = None
         if signed_shap_per_feature and fname in signed_shap_per_feature:
