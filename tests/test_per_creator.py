@@ -31,19 +31,22 @@ from creator_analytics.models import (
 # ------------------------------------------------------------------ #
 
 def _make_creator_data(n_creators: int = 4, n_per_creator: int = 20, seed: int = 0):
-    """Synthetic feature + target + author_ids for per-creator tests."""
+    """Synthetic feature + target + author_ids for per-creator tests.
+
+    All features are numeric to match the new one-hot pipeline.
+    """
     rng = np.random.RandomState(seed)
     total = n_creators * n_per_creator
     author_ids = pd.Series(
         [f"creator_{i // n_per_creator}" for i in range(total)], name="author_id"
     )
     X = pd.DataFrame({
-        "duration_log": rng.rand(total).astype("float64"),
-        "desc_len": rng.randint(0, 200, total).astype("float64"),
-        "ratio": pd.array(["9:16"] * (total // 2) + ["1:1"] * (total - total // 2), dtype=object),
-        "topic": pd.array(["music"] * total, dtype=object),
-        "music_selected_from": pd.array(["original"] * total, dtype=object),
-        "dominant_emotion": pd.array(["joy"] * total, dtype=object),
+        "duration_log":  rng.rand(total).astype("float64"),
+        "desc_len":      rng.randint(0, 200, total).astype("float64"),
+        "publish_hour":  rng.randint(0, 24, total).astype("float64"),
+        "ratio_9_16":    rng.randint(0, 2, total).astype("float64"),
+        "topic_music":   rng.randint(0, 2, total).astype("float64"),
+        "dominant_joy":  rng.randint(0, 2, total).astype("float64"),
     })
     y = pd.Series(rng.randn(total), name="target")
     return X, y, author_ids

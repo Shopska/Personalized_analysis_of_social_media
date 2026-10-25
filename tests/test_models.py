@@ -16,11 +16,13 @@ import pytest
 
 from creator_analytics.evaluate import compute_metrics, compute_per_creator_metrics
 from creator_analytics.models import (
+    META_COLS,
     TrainedModel,
     make_cv_splits,
     prepare_X,
     search_random_forest,
     search_xgboost,
+    train_finetune_per_creator,
     trivial_creator_mean,
     trivial_zero_rmse,
 )
@@ -31,18 +33,21 @@ from creator_analytics.models import (
 # ------------------------------------------------------------------ #
 
 def _make_tiny_train(n: int = 60, n_creators: int = 6, seed: int = 0):
-    """Minimal feature DataFrame + target + author_ids."""
+    """Minimal feature DataFrame + target + author_ids.
+
+    All features are numeric to match the new one-hot pipeline (no string categoricals).
+    """
     rng = np.random.RandomState(seed)
     author_ids = pd.Series(
         [f"creator_{i % n_creators}" for i in range(n)], name="author_id"
     )
     X = pd.DataFrame({
-        "duration_log": rng.rand(n).astype("float64"),
-        "desc_len": rng.randint(0, 200, n).astype("float64"),
-        "ratio": pd.array(["9:16"] * (n // 2) + ["1:1"] * (n - n // 2), dtype=object),
-        "topic": pd.array(["music"] * n, dtype=object),
-        "music_selected_from": pd.array(["original"] * n, dtype=object),
-        "dominant_emotion": pd.array(["joy"] * n, dtype=object),
+        "duration_log":     rng.rand(n).astype("float64"),
+        "desc_len":         rng.randint(0, 200, n).astype("float64"),
+        "publish_hour":     rng.randint(0, 24, n).astype("float64"),
+        "ratio_9_16":       rng.randint(0, 2, n).astype("float64"),
+        "topic_music":      rng.randint(0, 2, n).astype("float64"),
+        "dominant_joy":     rng.randint(0, 2, n).astype("float64"),
     })
     y = pd.Series(rng.randn(n), name="target")
     return X, y, author_ids
@@ -70,23 +75,34 @@ def test_search_xgboost_has_no_test_params():
 # prepare_X                                                            #
 # ------------------------------------------------------------------ #
 
-def test_prepare_x_drops_video_id():
-    df = pd.DataFrame({"video_id": ["a", "b"], "duration_log": [1.0, 2.0]})
+def test_prepare_x_drops_meta_cols():
+    df = pd.DataFrame({
+        "video_id": ["a", "b"],
+        "author_id": ["c1", "c1"],
+        "split": ["train", "test"],
+        "create_dt": [None, None],
+        "target_abs": [1.0, 2.0],
+        "target_rel": [0.1, 0.2],
+        "creator_baseline": [1.0, 1.0],
+        "duration_log": [1.5, 2.0],
+    })
     X = prepare_X(df)
-    assert "video_id" not in X.columns
+    for col in META_COLS:
+        assert col not in X.columns
+    assert "duration_log" in X.columns
 
 
-def test_prepare_x_drops_is_ads():
-    df = pd.DataFrame({"is_ads": [0, 1], "duration_log": [1.0, 2.0]})
-    X = prepare_X(df)
-    assert "is_ads" not in X.columns
-
-
-def test_prepare_x_converts_nullable_int():
-    df = pd.DataFrame({"publish_hour": pd.array([10, None, 14], dtype="Int8")})
-    X = prepare_X(df)
-    assert X["publish_hour"].dtype == np.float64
-    assert np.isnan(X["publish_hour"].iloc[1])
+def test_prepare_x_drop_vs_creator():
+    df = pd.DataFrame({
+        "duration_log": [1.0, 2.0],
+        "duration_log_vs_creator": [0.1, -0.1],
+        "publish_hour": [10.0, 12.0],
+    })
+    X_global = prepare_X(df, drop_vs_creator=False)
+    X_pc = prepare_X(df, drop_vs_creator=True)
+    assert "duration_log_vs_creator" in X_global.columns
+    assert "duration_log_vs_creator" not in X_pc.columns
+    assert "duration_log" in X_pc.columns
 
 
 # ------------------------------------------------------------------ #
@@ -262,3 +278,26 @@ def test_trained_model_save_load(tmp_path):
     model.save(path)
     loaded = TrainedModel.load(path)
     np.testing.assert_allclose(model.predict(X), loaded.predict(X))
+
+
+# ------------------------------------------------------------------ #
+# C4 finetune: column validation                                       #
+# ------------------------------------------------------------------ #
+
+def test_finetune_per_creator_wrong_features_raises():
+    """train_finetune_per_creator raises ValueError when X columns != global feature_names."""
+    X, y, author_ids = _make_tiny_train(n=60, n_creators=6)
+    global_model = search_xgboost(X, y, author_ids, n_splits=2, seed=0, n_iter=2)
+    # Subset of features — mismatches global_model.feature_names
+    X_wrong = X[["duration_log", "desc_len"]]
+    with pytest.raises(ValueError, match="feature_names"):
+        train_finetune_per_creator(X_wrong, y, author_ids, global_model=global_model)
+
+
+def test_finetune_per_creator_wrong_column_count_message():
+    """Error message includes actual vs expected column counts."""
+    X, y, author_ids = _make_tiny_train(n=60, n_creators=6)
+    global_model = search_xgboost(X, y, author_ids, n_splits=2, seed=0, n_iter=2)
+    X_wrong = X[["duration_log"]]
+    with pytest.raises(ValueError, match="1"):
+        train_finetune_per_creator(X_wrong, y, author_ids, global_model=global_model)
