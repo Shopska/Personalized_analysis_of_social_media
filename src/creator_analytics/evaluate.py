@@ -253,25 +253,6 @@ def log_experiment(
             f.write(line)
 
 
-def predict_per_creator(
-    X_test: pd.DataFrame,
-    author_ids_test: pd.Series,
-    creator_models: dict,
-) -> np.ndarray:
-    """Return predictions aligned with X_test / author_ids_test.
-
-    Fills NaN for any creator not in creator_models.
-    """
-    y_pred = np.full(len(X_test), np.nan)
-    for author, idx_vals in author_ids_test.groupby(author_ids_test).groups.items():
-        if author not in creator_models:
-            continue
-        m = creator_models[author]
-        positions = X_test.index.get_indexer(idx_vals)
-        X_group = X_test.loc[idx_vals, m.feature_names]
-        y_pred[positions] = m.model.predict(X_group)
-    return y_pred
-
 
 def save_metrics(metrics: dict, path: str | Path) -> None:
     """Merge new metrics into results/metrics.json (creates or updates)."""

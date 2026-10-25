@@ -1,14 +1,17 @@
-"""Natural-language recommendations from SHAP feature explanations.
+"""Natural-language recommendations from global SHAP feature explanations.
 
 Public API
 ----------
-build_shap_context(author_id, pc_shap_df, global_importance, pc_meta,
-                   rank_corr_df, stability_df=None, signed_shap_per_feature=None)
+build_shap_context(author_id, creator_shap_rows, global_importance,
+                   n_train, n_test, size_bin)
     -> ShapContext
 
 get_recommendations(ctx, use_llm=True) -> list[str]
     Returns 2–4 recommendation strings in Ukrainian.
     Falls back to templates if ANTHROPIC_API_KEY is not set or anthropic is unavailable.
+
+Note: SHAP data is optional. If creator_shap_rows is empty / None, top_features
+      will be empty and the LLM/templates will work from global_top_features only.
 """
 
 from __future__ import annotations
@@ -21,103 +24,78 @@ import pandas as pd
 
 from creator_analytics.features import describe_feature
 
-_STABILITY_THRESHOLD = 0.4
 _STABILITY_FALLBACK_N_TRAIN = 150
 
 
 @dataclass
 class ShapContext:
-    """Summary of a creator's SHAP-derived feature profile."""
+    """Summary of a creator's feature profile derived from the global model's SHAP values."""
 
     author_id: str
     n_train: int
     n_test: int
     size_bin: str
-    # Each dict: feature, label, mean_abs_shap, direction ("+"/"-"/None)
+    # Top features for this creator's test videos (global model SHAP, filtered to creator)
     top_features: list[dict]
+    # Global top-5 feature names (averaged across all test videos)
     global_top_features: list[str]
-    rank_corr_global: float
-    stability_score: float | None
-    is_stable: bool
     overlap_with_global: int
+    is_stable: bool  # False when n_train < threshold
 
 
 def build_shap_context(
     author_id: str,
-    pc_shap_df: pd.DataFrame,
+    creator_shap_rows: pd.DataFrame | None,
     global_importance: pd.DataFrame,
-    pc_meta: pd.DataFrame,
-    rank_corr_df: pd.DataFrame,
-    stability_df: pd.DataFrame | None = None,
-    signed_shap_per_feature: dict[str, float] | None = None,
+    n_train: int,
+    n_test: int,
+    size_bin: str,
     top_n: int = 5,
 ) -> ShapContext:
-    """Assemble a ShapContext for one creator from pre-computed SHAP data.
+    """Build a ShapContext for one creator using global-model SHAP values.
 
     Parameters
     ----------
-    signed_shap_per_feature:
-        Optional dict mapping feature name -> average signed SHAP value for
-        this creator (computed externally from the creator's RF model).
-        Used to determine direction ("+"/"-") in recommendations.
+    creator_shap_rows:
+        Rows of shap_global_test.parquet for this creator's test videos.
+        Each column is a feature, each row a video.  May be None or empty
+        if SHAP has not been computed yet — the context is still valid but
+        top_features will be empty.
+    global_importance:
+        DataFrame with columns ['feature', 'mean_abs_shap'] sorted descending,
+        computed over all test videos.
     """
-    meta_row = pc_meta[pc_meta["author_id"] == author_id]
-    if meta_row.empty:
-        raise ValueError(f"Creator {author_id!r} not found in pc_meta")
-    meta = meta_row.iloc[0]
-
-    creator_shap = (
-        pc_shap_df[pc_shap_df["author_id"] == author_id]
-        .sort_values("mean_abs_shap", ascending=False)
-        .head(top_n)
-    )
-
     top_feats: list[dict] = []
-    for _, row in creator_shap.iterrows():
-        fname = row["feature"]
-        raw_label = describe_feature(fname)
-        label = raw_label[:60] if len(raw_label) > 60 else raw_label
-        direction: str | None = None
-        if signed_shap_per_feature and fname in signed_shap_per_feature:
-            v = signed_shap_per_feature[fname]
-            direction = "+" if v > 0 else "-"
-        top_feats.append({
-            "feature": fname,
-            "label": label,
-            "mean_abs_shap": float(row["mean_abs_shap"]),
-            "direction": direction,
-        })
+
+    if creator_shap_rows is not None and len(creator_shap_rows) > 0:
+        creator_mean_abs = creator_shap_rows.abs().mean()
+        creator_mean_signed = creator_shap_rows.mean()
+        top_series = creator_mean_abs.sort_values(ascending=False).head(top_n)
+        for fname, mean_abs in top_series.items():
+            signed = float(creator_mean_signed.get(fname, 0.0))
+            direction: str | None = "+" if signed > 0 else "-"
+            raw_label = describe_feature(str(fname))
+            label = raw_label[:60] if len(raw_label) > 60 else raw_label
+            top_feats.append({
+                "feature":        str(fname),
+                "label":          label,
+                "mean_abs_shap":  float(mean_abs),
+                "direction":      direction,
+            })
 
     global_top5 = global_importance.head(5)["feature"].tolist()
-
-    rho_row = rank_corr_df[rank_corr_df["author_id"] == author_id]
-    rho = float(rho_row["spearman_vs_global"].values[0]) if not rho_row.empty else float("nan")
-
-    stability: float | None = None
-    if stability_df is not None and not stability_df.empty:
-        stab_row = stability_df[stability_df["author_id"] == author_id]
-        if not stab_row.empty:
-            stability = float(stab_row["stability"].values[0])
-
     creator_top_names = [f["feature"] for f in top_feats]
     overlap = len(set(creator_top_names) & set(global_top5))
 
-    if stability is not None:
-        is_stable = stability >= _STABILITY_THRESHOLD
-    else:
-        is_stable = int(meta["n_train"]) >= _STABILITY_FALLBACK_N_TRAIN
-
     return ShapContext(
         author_id=author_id,
-        n_train=int(meta["n_train"]),
-        n_test=int(meta["n_test"]),
-        size_bin=str(meta["size_bin"]),
+        n_train=n_train,
+        n_test=n_test,
+        size_bin=size_bin,
         top_features=top_feats,
         global_top_features=global_top5,
-        rank_corr_global=rho,
-        stability_score=stability,
-        is_stable=is_stable,
         overlap_with_global=overlap,
+        is_stable=n_train >= _STABILITY_FALLBACK_N_TRAIN,
     )
 
 
@@ -132,7 +110,7 @@ _SYSTEM_PROMPT = """\
 Обов'язкові правила:
 1. Ніколи не обіцяй конкретну кількість переглядів, підписників або охоплення.
 2. Використовуй «асоціюється з», а не «призводить до» чи «гарантує».
-3. Якщо результати нестабільні або даних мало — скажи про це прямо.
+3. Якщо результатів мало — скажи про це прямо.
 4. Рекомендації мають бути конкретними й дієвими, без загальних слів.
 5. Відповідай виключно українською мовою.
 """
@@ -142,34 +120,33 @@ def _build_llm_prompt(ctx: ShapContext) -> str:
     lines = [
         f"Статистика креатора:",
         f"  Навчальних відео: {ctx.n_train}  |  Група розміру: {ctx.size_bin}",
-        f"  Схожість профілю з «середнім» (ρ): {ctx.rank_corr_global:.2f}",
     ]
 
     if not ctx.is_stable:
-        stab_detail = (
-            f"{ctx.stability_score:.2f}" if ctx.stability_score is not None
-            else f"н/д (менше {_STABILITY_FALLBACK_N_TRAIN} навч. відео)"
-        )
         lines.append(
-            f"\n⚠️ НЕСТАБІЛЬНІСТЬ: стабільність топ-3 ознак = {stab_detail}. "
+            f"\n⚠️ НЕСТАБІЛЬНІСТЬ: менше {_STABILITY_FALLBACK_N_TRAIN} навч. відео. "
             "Зроби застереження про ненадійність у кожній рекомендації."
         )
 
-    lines.append(f"\nНайважливіші ознаки цього креатора (топ-{len(ctx.top_features)}):")
-    for i, f in enumerate(ctx.top_features, 1):
-        dir_str = ""
-        if f["direction"] == "+":
-            dir_str = " → вищі значення асоціюються з кращим результатом"
-        elif f["direction"] == "-":
-            dir_str = " → нижчі значення асоціюються з кращим результатом"
-        lines.append(f"  {i}. {f['feature']} («{f['label']}»){dir_str}")
+    if ctx.top_features:
+        lines.append(f"\nНайважливіші ознаки цього креатора (з глобальної моделі, топ-{len(ctx.top_features)}):")
+        for i, f in enumerate(ctx.top_features, 1):
+            dir_str = ""
+            if f["direction"] == "+":
+                dir_str = " → вищі значення асоціюються з кращим результатом"
+            elif f["direction"] == "-":
+                dir_str = " → нижчі значення асоціюються з кращим результатом"
+            lines.append(f"  {i}. {f['feature']} («{f['label']}»){dir_str}")
+    else:
+        lines.append("\nДані SHAP для окремих відео ще не пораховані. Використай глобальні топ-5 ознак.")
 
     global_str = ", ".join(ctx.global_top_features)
-    lines.append(f"\nГлобальні топ-5 ознак (для порівняння): {global_str}")
-    lines.append(
-        f"Збіг з глобальними топ-5: {ctx.overlap_with_global}/5 "
-        f"({'унікальний профіль' if ctx.overlap_with_global <= 1 else 'схожий на середній'})"
-    )
+    lines.append(f"\nГлобальні топ-5 ознак: {global_str}")
+    if ctx.top_features:
+        lines.append(
+            f"Збіг з глобальними топ-5: {ctx.overlap_with_global}/5 "
+            f"({'унікальний профіль' if ctx.overlap_with_global <= 1 else 'схожий на середній'})"
+        )
     lines.append(
         "\nДай 2–4 конкретні рекомендації. "
         "Формат: одне речення-суть + одне речення-обґрунтування. "
@@ -180,7 +157,7 @@ def _build_llm_prompt(ctx: ShapContext) -> str:
 
 def _call_llm(ctx: ShapContext) -> list[str]:
     try:
-        import anthropic  # lazy import — optional dependency
+        import anthropic
     except ImportError:
         raise RuntimeError("anthropic package not installed")
 
@@ -194,7 +171,6 @@ def _call_llm(ctx: ShapContext) -> list[str]:
         messages=[{"role": "user", "content": _build_llm_prompt(ctx)}],
     )
     text = response.content[0].text.strip()
-    # Split on blank lines or numbered items; return as list
     import re
     items = [s.strip() for s in re.split(r"\n{2,}|\n(?=\d+[\.\)])", text) if s.strip()]
     return items[:4] if items else [text]
@@ -207,14 +183,19 @@ def _call_llm(ctx: ShapContext) -> list[str]:
 def _fallback_recommendations(ctx: ShapContext) -> list[str]:
     recs: list[str] = []
 
-    for feat in ctx.top_features[:3]:
+    features_to_use = ctx.top_features if ctx.top_features else [
+        {"feature": f, "label": describe_feature(f), "direction": None}
+        for f in ctx.global_top_features[:3]
+    ]
+
+    for feat in features_to_use[:3]:
         label = feat["label"]
-        if feat["direction"] == "+":
+        if feat.get("direction") == "+":
             recs.append(
                 f"Вищі значення показника «{label}» асоціюються з кращими результатами "
                 f"у твоїх відео — зверни на нього увагу при плануванні контенту."
             )
-        elif feat["direction"] == "-":
+        elif feat.get("direction") == "-":
             recs.append(
                 f"Нижчі значення показника «{label}» асоціюються з кращими результатами "
                 f"у твоїх відео — розглянь, як це можна оптимізувати."
@@ -250,5 +231,5 @@ def get_recommendations(ctx: ShapContext, use_llm: bool = True) -> list[str]:
         try:
             return _call_llm(ctx)
         except Exception:
-            pass  # silently fall back to templates
+            pass
     return _fallback_recommendations(ctx)
