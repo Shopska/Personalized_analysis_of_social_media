@@ -262,6 +262,46 @@ fig.savefig(FIGS / "nb01_engagement_distributions.png", dpi=120, bbox_inches="ti
 plt.show()
 """
 
+NB01_INTERP_LOAD = """\
+**Result:** All three tables load without errors: 209,543 videos (175.1 MB), 278,433 creator-daily snapshots (3.1 MB), 6,068,955 engagement rows (31.8 MB).
+**Takeaway:** The engagement table is ~29× the video count, consistent with ~29 daily snapshots per video. Data download succeeded cleanly; all tables are at expected sizes.
+"""
+
+NB01_INTERP_SCHEMA = """\
+**Result:** Notable nulls: `transcript` 60.3 %, `sticker_text` 52.8 %, `music_album` 77.6 %. `enterprise_verified` in `creator_daily` is 100 % null. Text statistics (`word_count`, `speaking_rate`, etc.) are 37.9 % null — exactly the videos missing transcripts. `engagement_daily` has 0 nulls in any column.
+**Takeaway:** `enterprise_verified` must be dropped entirely. The joint-missingness pattern for text stats will turn out to be a data-collection artifact tied to publish month, not a content signal — confirmed in NB03.
+"""
+
+NB01_INTERP_DATERANGE = """\
+**Result:** Videos were published 2024-06-24 to 2024-11-09. `creator_daily` and `engagement_daily` both extend one month further, to 2024-12-09.
+**Takeaway:** The extra month in `creator_daily` enables a clean as-of join for follower counts: every video has a creator snapshot available after its publication date, with no forward-leakage risk.
+"""
+
+NB01_INTERP_CREATORS = """\
+**Result:** 1,872 unique creators; median 69 videos per creator, max 2,218.
+**Takeaway:** The distribution is highly skewed. A minimum-video filter is needed so each creator has enough data for a reliable train/test split — NB03 uses min = 30 videos.
+"""
+
+NB01_INTERP_THRESHOLD = """\
+**Result:** At min = 10 videos: 1,802 creators, 209,051 videos. At min = 30: 1,439 creators, 201,832 videos. At min = 50: 1,143 creators, 190,260 videos.
+**Takeaway:** Moving from min = 10 to min = 30 drops 363 creators (20 %) but only 7,219 videos (3.4 %). Min = 30 keeps 96.6 % of the data while ensuring each creator has enough history for a robust train split.
+"""
+
+NB01_INTERP_JOIN = """\
+**Result:** All four cross-table join counts are 0 — no orphan records in any direction.
+**Takeaway:** The three tables are fully consistent: every video has engagement tracking and every creator has a daily profile. No imputation at the join level is needed.
+"""
+
+NB01_INTERP_ENG_METRICS = """\
+**Result:** At day 14: median `play_count` 599, mean 26,313, max 37.8 M. Median likes 43, comments 3, shares 0.
+**Takeaway:** `play_count` is strongly right-skewed — mean is 44× the median. Log transformation is required before modelling. `play_count` is the most informative single engagement signal; the other metrics are even more concentrated at zero.
+"""
+
+NB01_INTERP_ENG_FIG = """\
+**Result:** Log-scale histograms of all six metrics show roughly bell-shaped distributions. `play_count` has the widest spread; `download_count` is the most concentrated near zero.
+**Takeaway:** `log1p` transformation works well for all metrics. Only `play_count` is used as the target; NB02 confirms day 14 is the right measurement point.
+"""
+
 # ================================================================== #
 # NOTEBOOK 02: Target Selection                                       #
 # ================================================================== #
@@ -335,8 +375,8 @@ print(f"\\nDistinct days tracked per video: "
 """
 
 NB02_COV_NOTE = """\
-> **Key observation**: day 14 is the *only* day with 100 % exact coverage.
-> Day 30 is 35.3 %; day 7 is 98.4 %.  Use the table above to compare.
+**Result:** Day 14 is the only day with 100 % exact coverage (209,543 videos). Day 7 has 98.4 %; day 30 has only 35.3 %. The median video is tracked for 30 days.
+**Takeaway:** Day 14 is the only unambiguous measurement point — no imputation needed. Day 30 is unsuitable as a target because 65 % of videos do not yet have that observation in the dataset.
 """
 
 NB02_COV_FIG = """\
@@ -685,6 +725,46 @@ fig.savefig(FIGS / "fig6_per_creator_correlations.png", dpi=120)
 plt.show()
 """
 
+NB02_INTERP_MONO = """\
+**Result:** 1,240 videos (0.59 %) have at least one decrease in `play_count` over time. When present, the median drop is 96.2 % of peak — a near-total reset.
+**Takeaway:** These are data-collection resets, not real engagement drops. They are excluded from all targets to avoid noisy labels (confirmed in NB03: exactly 1,240 excluded, leaving 200,616 usable videos).
+"""
+
+NB02_INTERP_ACCUM_FIG = """\
+**Result:** The accumulation curve shows rapid early growth: the median video reaches most of its day-29 play count within the first two weeks. The IQR narrows considerably after day 14.
+**Takeaway:** Most engagement is earned early. Day 14 captures the main growth phase before the curve flattens; the quantitative check in the next cell confirms it is a reliable proxy for the video's final ranking.
+"""
+
+NB02_INTERP_ACCUM_TABLE = """\
+**Result:** By day 14, the median video has 95.7 % of its day-29 play count (80.2 % of videos already ≥ 90 %; Spearman ρ = 0.996 with day-29). Day 7 reaches 90.3 % median with ρ = 0.990.
+**Takeaway:** Day-14 play count is an accurate proxy for the video's final engagement level. ρ = 0.996 means the ranking of videos by popularity is essentially the same at day 14 and day 29 — models trained on day-14 labels will generalise to the final ranking.
+"""
+
+NB02_INTERP_SPLIT = """\
+**Result:** After the 30-video creator filter: 201,832 videos, 1,439 creators. Split: 161,465 train / 40,367 test.
+**Takeaway:** The creator-stratified split ensures every creator appears in both train and test — required for computing creator baselines and evaluating generalisation within creators.
+"""
+
+NB02_INTERP_R2 = """\
+**Result:** "Predict creator mean" explains 73.2 % of absolute log-view variance (test R² = 0.732) but only 4.4 % of relative target variance (R² = 0.044). RMSE is 0.984 in both cases.
+**Takeaway:** The absolute target is dominated by who the creator is, not what they posted. The relative target isolates content-driven variance. Any model that beats RMSE 0.984 on the relative target is genuinely learning from features beyond creator identity.
+"""
+
+NB02_INTERP_ENG_RATE = """\
+**Result:** Creator identity explains 49.3 % of engagement-rate variance (vs 73.2 % for absolute log-views).
+**Takeaway:** Engagement rate is less creator-dominated than raw views — audiences differ in their commenting and liking habits. For this project we predict relative views; engagement rate could be an alternative target in future work.
+"""
+
+NB02_INTERP_FOLLOWER = """\
+**Result:** As-of follower count covers 100 % of the 201,832 filtered videos. Spearman ρ = 0.645 with the absolute log-view target.
+**Takeaway:** Follower count at publication time is the single strongest pre-publication signal. It enters the model as a feature (not a target component); the as-of join guarantees only the snapshot before publication day is used, with no forward leakage.
+"""
+
+NB02_INTERP_PC_CORR = """\
+**Result:** All 14 features show std_real/std_null > 1 (heterogeneity above chance). Highest: `duration` (1.58), `word_count` (1.57). For `duration`, 55 % of creators have a *negative* per-creator correlation despite a positive global ρ = 0.116.
+**Takeaway:** Feature effects vary meaningfully across creators — the same feature pushes engagement up for some and down for others. This motivates adding creator-relative features (`*_vs_creator`) in the feature engineering step.
+"""
+
 
 # ================================================================== #
 # Assemble and write                                                  #
@@ -714,18 +794,26 @@ nb01 = make_nb([
     new_code_cell(COLAB_GUARD),
     new_code_cell(SETUP_COMMON),
     new_code_cell(NB01_LOAD),
+    new_markdown_cell(NB01_INTERP_LOAD),
     new_markdown_cell(NB01_SCHEMA_MD),
     new_code_cell(NB01_SCHEMA),
+    new_markdown_cell(NB01_INTERP_SCHEMA),
     new_markdown_cell(NB01_DATERANGE_MD),
     new_code_cell(NB01_DATERANGE),
+    new_markdown_cell(NB01_INTERP_DATERANGE),
     new_markdown_cell(NB01_CREATORS_MD),
     new_code_cell(NB01_CREATORS),
+    new_markdown_cell(NB01_INTERP_CREATORS),
     new_code_cell(NB01_THRESHOLD),
+    new_markdown_cell(NB01_INTERP_THRESHOLD),
     new_markdown_cell(NB01_JOIN_MD),
     new_code_cell(NB01_JOIN),
+    new_markdown_cell(NB01_INTERP_JOIN),
     new_markdown_cell(NB01_ENG_MD),
     new_code_cell(NB01_ENG_METRICS),
+    new_markdown_cell(NB01_INTERP_ENG_METRICS),
     new_code_cell(NB01_ENG_FIG),
+    new_markdown_cell(NB01_INTERP_ENG_FIG),
 ])
 
 nb02 = make_nb([
@@ -739,22 +827,30 @@ nb02 = make_nb([
     new_code_cell(NB02_COV_FIG),
     new_markdown_cell(NB02_MONO_MD),
     new_code_cell(NB02_MONO),
+    new_markdown_cell(NB02_INTERP_MONO),
     new_markdown_cell(NB02_RATIO_MD),
     new_code_cell(NB02_ACCUM_FIG),
+    new_markdown_cell(NB02_INTERP_ACCUM_FIG),
     new_code_cell(NB02_ACCUM_TABLE),
+    new_markdown_cell(NB02_INTERP_ACCUM_TABLE),
     new_markdown_cell(NB02_TARGET_MD),
     new_code_cell(NB02_SPLIT),
+    new_markdown_cell(NB02_INTERP_SPLIT),
     new_code_cell(NB02_BUILD_TARGET),
     new_code_cell(NB02_TARGET_FIG),
     new_code_cell(NB02_R2),
+    new_markdown_cell(NB02_INTERP_R2),
     new_code_cell(NB02_R2_FIG),
     new_code_cell(NB02_ENG_RATE),
+    new_markdown_cell(NB02_INTERP_ENG_RATE),
     new_code_cell(NB02_TOP15_FIG),
     new_markdown_cell(NB02_FOLLOWER_MD),
     new_code_cell(NB02_FOLLOWER),
+    new_markdown_cell(NB02_INTERP_FOLLOWER),
     new_code_cell(NB02_FOLLOWER_FIG),
     new_markdown_cell(NB02_PC_CORR_MD),
     new_code_cell(NB02_PC_CORR),
+    new_markdown_cell(NB02_INTERP_PC_CORR),
     new_code_cell(NB02_PC_CORR_FIG),
 ])
 
