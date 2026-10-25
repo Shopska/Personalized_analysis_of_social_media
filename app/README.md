@@ -8,9 +8,8 @@ like `st.selectbox(...)` or `st.bar_chart(...)` to render widgets, and Streamlit
 reruns your script top-to-bottom whenever the user interacts with something. That's
 the whole model: it's why `streamlit_app.py` reads like a script, not a web server.
 
-This project uses it for one reason: a working demo you can click through is a much
-faster way to see what the personalised models actually learned than reading tables in
-a notebook.
+This project uses it to let you click through SHAP-based creator profiles — a much
+faster way to explore what the global model learned than reading tables in a notebook.
 
 ## How to run it
 
@@ -25,9 +24,13 @@ Opens at `http://localhost:8501`. Stop it with `Ctrl+C`.
 `models/`. If you haven't run the full pipeline yet:
 
 ```bash
-make reproduce   # data → features → global XGBoost → per-creator RF → evaluation
-# then run notebooks/07-explainability.ipynb to produce results/shap_*.parquet
+make reproduce   # data → features → global XGBoost → evaluation
+# then run notebooks/06-model-comparison.ipynb to produce results/shap_global_test.parquet
 ```
+
+The app degrades gracefully when optional artefacts are missing:
+- `results/shap_global_test.parquet` missing → SHAP tabs show an info message
+- `results/predictions_global.parquet` missing → Video tab shows an info message
 
 **Optional: LLM-powered recommendations.** Copy `.env.example` to `.env` and add
 your Anthropic API key:
@@ -43,14 +46,12 @@ Without the key the app still works — recommendations fall back to templates.
 
 ### Tab 1 — SHAP-профіль
 
-Shows the top 5 SHAP features for the selected creator alongside the global top 5,
-so you can see at a glance where this creator's model agrees or disagrees with what
-works on average. A separate row shows the Spearman rank-correlation between this
-creator's feature importance ordering and the global one.
+Shows the top 5 SHAP features for the selected creator (from the global model's
+SHAP values filtered to that creator's test videos) alongside the global top 5.
 
 ### Tab 2 — Рекомендації
 
-2–4 actionable recommendations in Ukrainian, derived purely from the SHAP values:
+2–4 actionable recommendations in Ukrainian, derived from SHAP values:
 what direction each important feature pushes predicted engagement and how confidently
 the model says it. If the creator has fewer than ~150 training videos the
 recommendations include an explicit stability warning. If `ANTHROPIC_API_KEY` is set
@@ -62,18 +63,17 @@ no raw view counts, no invented statistics.
 
 ### Tab 3 — Відео
 
-Picks a random held-out test video for the selected creator, runs the per-creator RF
-model on it, and shows predicted vs actual relative engagement. A signed SHAP bar
-chart shows which features pushed the prediction up (green) or down (red) for that
-specific video.
+Picks a random held-out test video for the selected creator and shows predicted vs
+actual relative engagement (from the global XGBoost model). A signed SHAP bar chart
+shows which features pushed the prediction up (green) or down (red) for that specific
+video.
 
 ## Key implementation notes
 
 - **Creator anonymisation** — author IDs are never shown; creators are displayed as
   "Creator 001", "Creator 002", … (sorted by author ID, deterministic across runs).
 - **`@st.cache_data` / `@st.cache_resource`** — results parquets and the global XGBoost
-  model are loaded once per session; per-creator RF models are loaded on demand (not
-  cached) since there are 1 437 of them.
-- **Guard at startup** — the app checks for the six required result files and calls
-  `st.stop()` with an informative message if any are missing, rather than crashing
-  mid-render.
+  model are loaded once per session.
+- **Guard at startup** — the app checks for the two required files
+  (`models/global_xgb.joblib`, `data/processed/dataset_index.parquet`) and calls
+  `st.stop()` with an informative message if either is missing.

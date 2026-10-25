@@ -3,8 +3,8 @@
 Commands
 --------
 data-summary    Print dataset size before and after filtering.
-train           Train baseline models.  --mode global (default).
-evaluate        Evaluate a saved model on the held-out test set. --mode global.
+train           Train baseline models.
+evaluate        Evaluate a saved model on the held-out test set.
 """
 
 from __future__ import annotations
@@ -13,8 +13,6 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-
-import numpy as np
 
 from creator_analytics.config import load_config
 from creator_analytics.data import filter_creators, load_raw_table, train_test_split_by_creator
@@ -164,7 +162,7 @@ def cmd_train_global(config: dict) -> int:
 
 
 def cmd_evaluate_global(config: dict) -> int:
-    """Load saved model, evaluate on test set, save metrics + per-creator breakdown."""
+    """Load saved model, evaluate on test set, save metrics + creator breakdown."""
     import datetime
     import pandas as pd
     from creator_analytics.evaluate import (
@@ -174,7 +172,7 @@ def cmd_evaluate_global(config: dict) -> int:
 
     model_path = "models/global_xgb.joblib"
     if not Path(model_path).exists():
-        logger.error("%s not found — run `train --mode global` first.", model_path)
+        logger.error("%s not found — run `train` first.", model_path)
         return 1
 
     logger.info("Loading model from %s", model_path)
@@ -188,12 +186,10 @@ def cmd_evaluate_global(config: dict) -> int:
     logger.info("Test  RMSE=%.4f  MAE=%.4f  R²=%.4f  Spearman=%.4f",
                 metrics["rmse"], metrics["mae"], metrics["r2"], metrics["spearman"])
 
-    per_creator = compute_per_creator_metrics(y_test, pd.Series(y_pred), author_test)
-    n_worse_than_zero = int((per_creator["rmse"] > per_creator["rmse"].quantile(0.0)).sum())
-    # actually: worse than trivial predict_0 means RMSE > std(y_test)
+    creator_metrics = compute_per_creator_metrics(y_test, pd.Series(y_pred), author_test)
     zero_rmse = float(y_test.std())
-    n_worse = int((per_creator["rmse"] > zero_rmse).sum())
-    logger.info("%d / %d creators where model > predict_0 RMSE", n_worse, len(per_creator))
+    n_worse = int((creator_metrics["rmse"] > zero_rmse).sum())
+    logger.info("%d / %d creators where model > predict_0 RMSE", n_worse, len(creator_metrics))
 
     today = datetime.date.today().isoformat()
     exp_path = config["paths"].get("experiments_log", "results/experiments.md")
@@ -215,126 +211,23 @@ def cmd_evaluate_global(config: dict) -> int:
     pd.DataFrame({"y_true": y_test.values, "y_pred": y_pred,
                   "author_id": author_test.values}).to_parquet(str(pred_path), index=False)
 
-    per_creator_path = Path("results/per_creator_metrics_global.parquet")
-    per_creator.to_parquet(str(per_creator_path), index=False)
-    logger.info("Saved per-creator metrics to %s", per_creator_path)
-    return 0
-
-
-def cmd_train_per_creator(config: dict) -> int:
-    """Find conservative config on 100 creators, then train one model per creator."""
-    import datetime
-    import pandas as pd
-    from creator_analytics.evaluate import (
-        compute_metrics, compute_per_creator_metrics,
-        log_experiment, predict_per_creator, save_metrics,
-    )
-    from creator_analytics.models import (
-        search_per_creator_config, train_per_creator_models,
-        trivial_creator_mean, trivial_zero_rmse,
-    )
-
-    seed = config["seed"]
-    n_jobs = config.get("n_jobs", -1)
-    today = datetime.date.today().isoformat()
-    exp_path = config["paths"].get("experiments_log", "results/experiments.md")
-    metrics_path = config["paths"].get("metrics", "results/metrics.json")
-
-    logger.info("Loading data …")
-    X_train, y_train, author_train, X_test, y_test, author_test = _load_train_test(config)
-
-    # Find conservative configs via CV on 100 sampled creators
-    logger.info("Searching per-creator config on 100 sampled creators …")
-    rf_cfg, xgb_cfg = search_per_creator_config(
-        X_train, y_train, author_train, sample_n=100, seed=seed, n_jobs=n_jobs
-    )
-
-    # Train all creators (both RF and XGB) in parallel
-    rf_models, xgb_models = train_per_creator_models(
-        X_train, y_train, author_train,
-        rf_config=rf_cfg, xgb_config=xgb_cfg,
-        n_jobs=n_jobs, seed=seed,
-    )
-
-    # Save per-creator model files
-    for author_id, m in rf_models.items():
-        m.save(f"models/per_creator/RF/{author_id}.joblib")
-    for author_id, m in xgb_models.items():
-        m.save(f"models/per_creator/XGB/{author_id}.joblib")
-    logger.info("Saved %d RF + %d XGB creator models.", len(rf_models), len(xgb_models))
-
-    # Evaluate on test
-    y_pred_rf = predict_per_creator(X_test, author_test, rf_models)
-    y_pred_xgb = predict_per_creator(X_test, author_test, xgb_models)
-    m_rf = compute_metrics(y_test[~np.isnan(y_pred_rf)], y_pred_rf[~np.isnan(y_pred_rf)])
-    m_xgb = compute_metrics(y_test[~np.isnan(y_pred_xgb)], y_pred_xgb[~np.isnan(y_pred_xgb)])
-
-    logger.info("RF  per-creator: RMSE=%.4f  MAE=%.4f  R²=%.4f  Spearman=%.4f",
-                m_rf["rmse"], m_rf["mae"], m_rf["r2"], m_rf["spearman"])
-    logger.info("XGB per-creator: RMSE=%.4f  MAE=%.4f  R²=%.4f  Spearman=%.4f",
-                m_xgb["rmse"], m_xgb["mae"], m_xgb["r2"], m_xgb["spearman"])
-
-    # Choose winner, save predictions from it
-    best_name = "RF" if m_rf["rmse"] <= m_xgb["rmse"] else "XGB"
-    best_models = rf_models if best_name == "RF" else xgb_models
-    y_pred_best = y_pred_rf if best_name == "RF" else y_pred_xgb
-    m_best = m_rf if best_name == "RF" else m_xgb
-    logger.info("Winner: %s", best_name)
-
-    pred_path = Path("results/predictions_per_creator.parquet")
-    pred_path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame({
-        "y_true": y_test.values,
-        "y_pred": y_pred_best,
-        "author_id": author_test.values,
-    }).to_parquet(str(pred_path), index=False)
-
-    per_creator = compute_per_creator_metrics(
-        y_test[~np.isnan(y_pred_best)],
-        pd.Series(y_pred_best[~np.isnan(y_pred_best)]),
-        author_test[~np.isnan(y_pred_best)],
-    )
-    per_creator.to_parquet("results/per_creator_metrics_percreator.parquet", index=False)
-
-    # Flag counts
-    n_worse_rf = sum(m.worse_than_zero for m in rf_models.values())
-    n_worse_xgb = sum(m.worse_than_zero for m in xgb_models.values())
-    logger.info("RF worse_than_zero: %d/%d  XGB: %d/%d",
-                n_worse_rf, len(rf_models), n_worse_xgb, len(xgb_models))
-
-    # Log experiments
-    log_experiment(exp_path, "per_creator_RF", today, "non_constant_per_creator",
-                   "RF_per_creator", rf_cfg, float("nan"), m_rf,
-                   f"worse_than_zero={n_worse_rf}/{len(rf_models)}")
-    log_experiment(exp_path, "per_creator_XGB", today, "non_constant_per_creator",
-                   "XGB_per_creator", xgb_cfg, float("nan"), m_xgb,
-                   f"worse_than_zero={n_worse_xgb}/{len(xgb_models)}")
-
-    save_metrics({
-        "per_creator_rf_test_rmse": m_rf["rmse"],
-        "per_creator_rf_test_r2": m_rf["r2"],
-        "per_creator_rf_worse_than_zero": n_worse_rf,
-        "per_creator_xgb_test_rmse": m_xgb["rmse"],
-        "per_creator_xgb_test_r2": m_xgb["r2"],
-        "per_creator_xgb_worse_than_zero": n_worse_xgb,
-        "per_creator_winner": best_name,
-    }, metrics_path)
+    creator_metrics_path = Path("results/creator_metrics_global.parquet")
+    creator_metrics.to_parquet(str(creator_metrics_path), index=False)
+    logger.info("Saved creator metrics to %s", creator_metrics_path)
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m creator_analytics",
-        description="Personalized explainable-ML analysis of TikTok creator performance.",
+        description="Explainable-ML analysis of TikTok creator performance.",
     )
     parser.add_argument("--config", default="config/default.yaml")
     parser.add_argument("--override", action="append", default=[])
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("data-summary")
-    train_p = subparsers.add_parser("train", help="Train baseline model")
-    train_p.add_argument("--mode", default="global", choices=["global", "per_creator"])
-    eval_p = subparsers.add_parser("evaluate", help="Evaluate saved model on test")
-    eval_p.add_argument("--mode", default="global", choices=["global"])
+    subparsers.add_parser("train", help="Train global baseline models")
+    subparsers.add_parser("evaluate", help="Evaluate saved model on test")
     return parser
 
 
@@ -347,10 +240,6 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "data-summary":
         sys.exit(cmd_data_summary(config))
     elif args.command == "train":
-        if args.mode == "global":
-            sys.exit(cmd_train_global(config))
-        elif args.mode == "per_creator":
-            sys.exit(cmd_train_per_creator(config))
+        sys.exit(cmd_train_global(config))
     elif args.command == "evaluate":
-        if args.mode == "global":
-            sys.exit(cmd_evaluate_global(config))
+        sys.exit(cmd_evaluate_global(config))

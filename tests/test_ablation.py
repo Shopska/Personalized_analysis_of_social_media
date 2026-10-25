@@ -130,7 +130,7 @@ def test_cv_global_rf_metric_keys():
     feats = ["f1", "t1"]
     results = cv_global_rf(X, y, auth, feats, RF_PARAMS, n_splits=3, seed=42)
     for fold in results:
-        assert set(fold.keys()) == {"rmse", "mae", "spearman", "median_pc_spearman"}
+        assert set(fold.keys()) == {"rmse", "mae", "spearman", "median_creator_spearman"}
         assert fold["rmse"] > 0
         assert fold["mae"] > 0
 

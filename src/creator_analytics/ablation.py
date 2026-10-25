@@ -123,7 +123,7 @@ def _fold_metrics(y_vl: pd.Series, preds: np.ndarray, auth_vl: pd.Series) -> dic
         "rmse":               m["rmse"],
         "mae":                m["mae"],
         "spearman":           m["spearman"],
-        "median_pc_spearman": float(pc["spearman"].median()),
+        "median_creator_spearman": float(pc["spearman"].median()),
     }
 
 
@@ -138,7 +138,7 @@ def cv_global_rf(
 ) -> list[dict]:
     """5-fold StratifiedKFold CV for a global RF on ``features``.
 
-    Returns list of 5 per-fold metric dicts (rmse, mae, spearman, median_pc_spearman).
+    Returns list of 5 per-fold metric dicts (rmse, mae, spearman, median_creator_spearman).
     Test data is never a parameter.
     """
     splits = make_cv_splits(auth_train, n_splits=n_splits, seed=seed)

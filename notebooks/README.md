@@ -12,7 +12,7 @@ Naming: `NN-kebab-case-name.ipynb`, numbered in the order you'd actually read th
 
 ## Notebooks in this project
 
-All eight notebooks are fully executed and committed with outputs. Run them in order:
+All seven notebooks are fully executed and committed with outputs. Run them in order:
 
 | # | Notebook | Goal | Key output |
 |---|----------|------|-----------|
@@ -20,16 +20,16 @@ All eight notebooks are fully executed and committed with outputs. Run them in o
 | 02 | `02-target-selection.ipynb` | Compare absolute vs relative play-count target; confirm follower-count leakage | Relative target chosen |
 | 03 | `03-feature-engineering.ipynb` | Build leakage-safe features (106 features, 14 groups) with `creator_analytics.features` | `data/processed/features.parquet`, `dataset_index.parquet`, `feature_spec.json` |
 | 04 | `04-baseline-models.ipynb` | Train global RF (B1) + XGBoost (B2); CV and test evaluation | `models/global_xgb.joblib`, `results/predictions_global.parquet` |
-| 06 | `06-hybrid-models.ipynb` | Train global LightGBM (C1) + Ridge (C2) | `models/hybrid/`, `results/predictions/nb06_predictions.parquet` |
-| 07 | `07-model-comparison.ipynb` | Build leaderboard (A1, A2, B1, B2, C1, C2); pairwise comparisons vs B2 baseline | `results/leaderboard.csv`, `results/figures/nb07_*.png` |
-| 08 | `08-feature-ablation.ipynb` | LOO + single-group CV for B1 global RF; 27 feature combinations | `results/ablation.csv`, `results/figures/nb08_loo_contribution.png` |
+| 05 | `05-alternative-models.ipynb` | Train global LightGBM (C1) + Ridge (C2) | `models/alternative/`, `results/predictions/nb05_predictions.parquet` |
+| 06 | `06-model-comparison.ipynb` | Build leaderboard (A1, A2, B1, B2, C1, C2); pairwise comparisons vs B2 baseline | `results/leaderboard.csv`, `results/figures/nb06_*.png` |
+| 07 | `07-feature-ablation.ipynb` | LOO + single-group CV for B1 global RF; 27 feature combinations | `results/ablation.csv`, `results/figures/nb07_loo_contribution.png` |
 
-To execute all notebooks:
+To execute notebooks 05–07:
 ```bash
 caffeinate -i .venv/bin/jupyter nbconvert --to notebook --execute --inplace \
-    --ExecutePreprocessor.timeout=1800 notebooks/06-hybrid-models.ipynb
+    --ExecutePreprocessor.timeout=1800 notebooks/05-alternative-models.ipynb
 caffeinate -i .venv/bin/jupyter nbconvert --to notebook --execute --inplace \
-    notebooks/07-model-comparison.ipynb
+    notebooks/06-model-comparison.ipynb
 caffeinate -i .venv/bin/jupyter nbconvert --to notebook --execute --inplace \
-    --ExecutePreprocessor.timeout=3600 notebooks/08-feature-ablation.ipynb
+    --ExecutePreprocessor.timeout=3600 notebooks/07-feature-ablation.ipynb
 ```

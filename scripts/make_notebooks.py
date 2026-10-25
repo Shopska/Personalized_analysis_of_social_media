@@ -9,7 +9,6 @@ Then execute them:
     jupyter nbconvert --to notebook --execute --inplace notebooks/02-target-selection.ipynb
     jupyter nbconvert --to notebook --execute --inplace notebooks/03-feature-engineering.ipynb
     jupyter nbconvert --to notebook --execute --inplace notebooks/04-baseline-model.ipynb
-    jupyter nbconvert --to notebook --execute --inplace notebooks/05-per-creator-models.ipynb
     jupyter nbconvert --to notebook --execute --inplace notebooks/06-model-comparison.ipynb
 """
 
@@ -291,10 +290,10 @@ The "author-only" baseline has RMSE = 0.984 on the relative target
 (test R² = 0.493, creator explains 49.3 %).
 `follower_count` at publish time (as-of backward join, 100 % coverage) has
 Spearman ρ = 0.645 with the absolute target — a powerful feature, not a target
-component. Per-creator Spearman correlations show cross-creator heterogeneity in
+component. Cross-creator Spearman correlations show heterogeneity in
 feature effects for all features (std_real/std_null > 1): highest for `duration`
 (1.58) and `word_count` (1.57); lowest for emotions ≈ 1.2–1.3. This motivates
-per-creator models.
+models.
 """
 
 NB02_LOAD = """\
@@ -775,7 +774,7 @@ NB03_GOAL = """\
 analyse each feature's distribution and null rate, identify near-duplicate feature
 pairs (|r| > 0.8), compute a Spearman-correlation sanity check against the relative
 target (train only), and flag features that are (nearly) constant within creators
-— those are uninformative for per-creator models even if useful globally.
+— those are nearly constant within creators and carry limited within-creator signal.
 
 **Input** – `data/raw/*.parquet` + `config/default.yaml`.
 Non-monotonic videos and creators below the min-threshold are excluded before
@@ -800,13 +799,13 @@ Recommendation: keep one from each pair; drop `hook_first_sentence_len` (already
 noted as unreliable), `desc_n_words`, and use `has_transcript` as the binary flag
 while keeping `speaking_rate` for videos that have it.
 
-*Per-creator constancy* (features useless for per-creator model):
+*Per-creator constancy* (features constant within most creators):
 `is_ads` (always 0 — zero variance globally too) and
 `hook_first_sentence_is_question` (100 % of creators have constant value — mostly
 NaN). All top-20 hashtag indicators have 75–89 % of creators constant (hashtags
-are per-creator niche, not within-creator signal). `created_by_ai` is constant for
+are niche features, not within-creator signal). `created_by_ai` is constant for
 86 % of creators. These features are valuable for the **global** model but should be
-excluded from per-creator models.
+excluded from models.
 """
 
 NB03_LOAD = """\
@@ -1108,10 +1107,10 @@ fig, ax = plt.subplots(figsize=(14, max(4, len(const_df) * 0.18)))
 colors = ["tomato" if v > 0.9 else ("orange" if v > 0.5 else "steelblue")
           for v in const_df["frac_creators_constant"]]
 ax.barh(const_df["feature"], const_df["frac_creators_constant"], color=colors, height=0.8)
-ax.axvline(0.9, color="red", linestyle="--", linewidth=0.8, label=">90% creators constant (useless for per-creator)")
+ax.axvline(0.9, color="red", linestyle="--", linewidth=0.8, label=">90% creators: near-constant feature")
 ax.axvline(0.5, color="orange", linestyle="--", linewidth=0.8, label=">50%")
 ax.set_xlabel("Fraction of creators where feature is constant")
-ax.set_title("Per-creator feature constancy  (red = >90%: useless for per-creator model)")
+ax.set_title("Per-creator feature constancy  (red = >90%: constant within most creators)")
 ax.legend(fontsize=8)
 fig.tight_layout()
 fig.savefig(FIGS / "nb03_creator_constancy.png", dpi=120)
@@ -1173,14 +1172,14 @@ NB04_GOAL = """\
 # 04 — Baseline Global Model
 
 **Goal** – Train and evaluate a global baseline model predicting
-per-creator-relative video engagement at day 14.
+relative video engagement at day 14.
 
 Steps:
 1. Load train/test splits and the pre-built feature matrix.
 2. Compute trivial baselines (predict 0, predict creator mean).
 3. Hyperparameter search: RandomForest and XGBoost (with / without follower count).
 4. Final evaluation on the held-out test set.
-5. Summary: metrics table, predicted vs actual, error distribution, per-creator RMSE.
+5. Summary: metrics table, predicted vs actual, error distribution.
 """
 
 NB04_LOAD = """\
@@ -1251,8 +1250,8 @@ Two baselines that require no ML:
 
 | Model | Prediction |
 |-------|-----------|
-| **predict_0** | Always 0 (= per-creator train median on relative target) |
-| **predict_creator_mean** | Per-creator train mean |
+| **predict_0** | Always 0 (relative target baseline) |
+| **predict_creator_mean** | Author train mean |
 """
 
 NB04_TRIVIAL = """\
@@ -1328,7 +1327,7 @@ The test set is touched **exactly once** — here.
 """
 
 NB04_TEST = """\
-from creator_analytics.evaluate import compute_metrics, compute_per_creator_metrics
+from creator_analytics.evaluate import compute_metrics
 
 # Trivial baselines
 m_zero  = compute_metrics(y_test, np.zeros(len(y_test)))
@@ -1398,34 +1397,8 @@ plt.tight_layout()
 plt.show()
 """
 
-NB04_PER_CREATOR_MD = """\
-## 7. Per-Creator Analysis
-"""
 
-NB04_PER_CREATOR = """\
-per_creator = compute_per_creator_metrics(y_test, pd.Series(y_pred_best), author_test)
-print(f"Creators in test: {len(per_creator)}")
-print(f"\\nTop 5 worst (highest RMSE):")
-display(per_creator.nlargest(5, "rmse"))
-print(f"\\nTop 5 best (lowest RMSE):")
-display(per_creator.nsmallest(5, "rmse"))
-"""
 
-NB04_PER_CREATOR_FIG = """\
-fig, ax = plt.subplots(figsize=(9, 4))
-ax.hist(per_creator["rmse"], bins=40, edgecolor="none")
-ax.axvline(m_best["rmse"], color="red", linestyle="--", linewidth=1.2, label="Global RMSE")
-ax.axvline(rmse_zero, color="orange", linestyle=":", linewidth=1.2, label="predict_0 RMSE")
-ax.set_xlabel("Per-creator test RMSE")
-ax.set_ylabel("Number of creators")
-ax.set_title("Distribution of per-creator RMSE (XGB best)")
-ax.legend()
-plt.tight_layout()
-plt.show()
-
-n_worse = (per_creator["rmse"] > rmse_zero).sum()
-print(f"{n_worse} / {len(per_creator)} creators where model is worse than predict_0")
-"""
 
 NB04_SAVE_MD = """\
 ## 8. Save Artefacts
@@ -1536,399 +1509,14 @@ nb04 = make_nb([
     new_markdown_cell(NB04_FIGURES_MD),
     new_code_cell(NB04_FIG_PRED_VS_ACTUAL),
     new_code_cell(NB04_FIG_ERROR),
-    new_markdown_cell(NB04_PER_CREATOR_MD),
-    new_code_cell(NB04_PER_CREATOR),
-    new_code_cell(NB04_PER_CREATOR_FIG),
     new_markdown_cell(NB04_SAVE_MD),
     new_code_cell(NB04_SAVE),
     new_markdown_cell(NB04_SUMMARY_MD),
     new_code_cell(NB04_SUMMARY),
 ])
 
-nbformat.write(nb04, NB_DIR / "04-baseline-model.ipynb")
+nbformat.write(nb04, NB_DIR / "04-baseline-models.ipynb")
 print("Written notebooks/04-baseline-model.ipynb")
-
-
-# ================================================================== #
-# NOTEBOOK 05: Per-Creator Models                                     #
-# ================================================================== #
-
-NB05_GOAL = """\
-# 05 — Per-Creator Models
-
-**Goal** – Train one personalized model per creator (1 439 models) and compare
-with the global baseline.
-
-Steps:
-1. Load the same train/test split and feature matrix as NB04.
-2. Choose one conservative config via CV on 100 sampled creators.
-3. Train RF and XGBoost per-creator (in parallel).
-4. Evaluate on the held-out test set.
-5. Compare with global model.
-6. Analyse: RMSE distribution, quality vs. creator size, flag worse-than-zero.
-"""
-
-NB05_LOAD = """\
-import pandas as pd
-import numpy as np
-from pathlib import Path
-
-from creator_analytics.config import load_config
-from creator_analytics.data import filter_creators, load_raw_table, train_test_split_by_creator
-from creator_analytics.features import build_features
-from creator_analytics.models import prepare_X
-from creator_analytics.targets import build_target, get_nonmonotonic_video_ids
-from creator_analytics.utils import set_seed
-
-config = load_config("config/default.yaml")
-set_seed(config["seed"])
-SEED   = config["seed"]
-RAW    = config["paths"]["raw_dir"]
-N_JOBS = -1
-
-videos        = load_raw_table(RAW, "videos")
-creator_daily = load_raw_table(RAW, "creator_daily")
-engagement    = load_raw_table(RAW, "engagement_daily")
-
-bad_ids  = get_nonmonotonic_video_ids(engagement)
-videos_f = filter_creators(
-    videos[~videos["video_id"].isin(bad_ids)].reset_index(drop=True),
-    "author_id", config["data"]["min_videos_per_creator"]
-)
-
-train_df, test_df = train_test_split_by_creator(
-    videos_f, "author_id", test_size=config["split"]["test_size"], seed=SEED
-)
-train_ids = set(train_df["video_id"])
-test_ids  = set(test_df["video_id"])
-
-feat_path = Path("data/processed/features.parquet")
-features  = pd.read_parquet(feat_path) if feat_path.exists() else build_features(
-    videos_f, creator_daily, train_video_ids=train_ids
-)
-
-rel_t = build_target(engagement, videos_f, day=14, mode="relative", train_video_ids=train_ids)
-data  = (features
-         .merge(videos_f[["video_id", "author_id"]], on="video_id")
-         .merge(rel_t, on="video_id"))
-
-train_mask = data["video_id"].isin(train_ids)
-test_mask  = data["video_id"].isin(test_ids)
-
-X_all = prepare_X(data.drop(columns=["author_id", "target"]))
-
-X_train      = X_all[train_mask].reset_index(drop=True)
-y_train      = data.loc[train_mask, "target"].reset_index(drop=True)
-author_train = data.loc[train_mask, "author_id"].reset_index(drop=True)
-
-X_test       = X_all[test_mask].reset_index(drop=True)
-y_test       = data.loc[test_mask, "target"].reset_index(drop=True)
-author_test  = data.loc[test_mask, "author_id"].reset_index(drop=True)
-
-n_creators = author_train.nunique()
-print(f"Train: {len(X_train):,} rows  Test: {len(X_test):,} rows  Creators: {n_creators}")
-"""
-
-NB05_CONFIG_MD = """\
-## 1. Choose Conservative Configuration
-
-Grid-search 8 RF configs × 8 XGBoost configs, averaged over 100 randomly
-sampled creators of varying sizes.  Pick the config with the lowest mean CV RMSE.
-"""
-
-NB05_CONFIG = """\
-from creator_analytics.models import search_per_creator_config, _PC_RF_GRID, _PC_XGB_GRID
-
-print(f"RF  grid: {len(_PC_RF_GRID)} configs")
-print(f"XGB grid: {len(_PC_XGB_GRID)} configs")
-
-rf_cfg, xgb_cfg = search_per_creator_config(
-    X_train, y_train, author_train, sample_n=100, seed=SEED, n_jobs=N_JOBS
-)
-print("\\nBest RF config:")
-for k, v in rf_cfg.items():
-    print(f"  {k}: {v}")
-print("\\nBest XGB config:")
-for k, v in xgb_cfg.items():
-    print(f"  {k}: {v}")
-"""
-
-NB05_TRAIN_MD = """\
-## 2. Train Per-Creator Models
-
-Train one RF and one XGBoost model per creator in parallel.
-Features that are constant within a creator's train videos are dropped.
-"""
-
-NB05_TRAIN = """\
-from creator_analytics.models import train_per_creator_models
-
-rf_models, xgb_models = train_per_creator_models(
-    X_train, y_train, author_train,
-    rf_config=rf_cfg, xgb_config=xgb_cfg,
-    n_jobs=N_JOBS, seed=SEED,
-)
-print(f"Trained {len(rf_models)} RF models, {len(xgb_models)} XGB models")
-
-# Feature count statistics
-n_features_rf  = [m.n_features for m in rf_models.values()]
-n_features_xgb = [m.n_features for m in xgb_models.values()]
-print(f"RF  features per creator: min={min(n_features_rf)}  median={np.median(n_features_rf):.0f}  max={max(n_features_rf)}")
-print(f"XGB features per creator: min={min(n_features_xgb)}  median={np.median(n_features_xgb):.0f}  max={max(n_features_xgb)}")
-
-n_worse_rf  = sum(m.worse_than_zero for m in rf_models.values())
-n_worse_xgb = sum(m.worse_than_zero for m in xgb_models.values())
-print(f"\\nWorse than predict_0 on train CV:")
-print(f"  RF : {n_worse_rf} / {len(rf_models)}")
-print(f"  XGB: {n_worse_xgb} / {len(xgb_models)}")
-"""
-
-NB05_EVAL_MD = """\
-## 3. Test Evaluation
-
-Test set is touched **once** — here.
-"""
-
-NB05_EVAL = """\
-from creator_analytics.evaluate import (
-    compute_metrics, compute_per_creator_metrics,
-    predict_per_creator,
-)
-from creator_analytics.models import trivial_zero_rmse, trivial_creator_mean
-
-rmse_zero = trivial_zero_rmse(y_test)
-rmse_cmean, _ = trivial_creator_mean(y_train, author_train, y_test, author_test)
-
-y_pred_rf  = predict_per_creator(X_test, author_test, rf_models)
-y_pred_xgb = predict_per_creator(X_test, author_test, xgb_models)
-
-mask_valid = ~np.isnan(y_pred_rf) & ~np.isnan(y_pred_xgb)
-m_rf  = compute_metrics(y_test[mask_valid], y_pred_rf[mask_valid])
-m_xgb = compute_metrics(y_test[mask_valid], y_pred_xgb[mask_valid])
-
-print(f"predict_0          RMSE={rmse_zero:.4f}")
-print(f"predict_creator_mean RMSE={rmse_cmean:.4f}")
-print(f"RF  per-creator    RMSE={m_rf['rmse']:.4f}  R²={m_rf['r2']:.4f}  Spearman={m_rf['spearman']:.4f}")
-print(f"XGB per-creator    RMSE={m_xgb['rmse']:.4f}  R²={m_xgb['r2']:.4f}  Spearman={m_xgb['spearman']:.4f}")
-
-best_name = "RF" if m_rf["rmse"] <= m_xgb["rmse"] else "XGB"
-y_pred_best = y_pred_rf if best_name == "RF" else y_pred_xgb
-m_best = m_rf if best_name == "RF" else m_xgb
-best_models = rf_models if best_name == "RF" else xgb_models
-print(f"\\nWinner: {best_name}")
-"""
-
-NB05_COMPARE_MD = """\
-## 4. Comparison: Global vs Per-Creator
-"""
-
-NB05_COMPARE = """\
-global_preds_path = Path("results/predictions_global.parquet")
-if global_preds_path.exists():
-    global_preds = pd.read_parquet(global_preds_path)
-    m_global = compute_metrics(global_preds["y_true"], global_preds["y_pred"])
-else:
-    m_global = {"rmse": float("nan"), "r2": float("nan"), "spearman": float("nan")}
-
-summary = pd.DataFrame({
-    "predict_0":            {"rmse": rmse_zero,     "r2": float("nan"), "spearman": float("nan")},
-    "predict_creator_mean": {"rmse": rmse_cmean,    "r2": float("nan"), "spearman": float("nan")},
-    "global_XGB":           m_global,
-    f"per_creator_RF":       m_rf,
-    f"per_creator_XGB":      m_xgb,
-}).T[["rmse", "r2", "spearman"]]
-
-display(summary.style.format({"rmse": "{:.4f}", "r2": "{:.4f}", "spearman": "{:.4f}"}, na_rep="—"))
-"""
-
-NB05_DIST_MD = """\
-## 5. RMSE Distribution Across Creators
-"""
-
-NB05_DIST = """\
-per_creator_pc = compute_per_creator_metrics(
-    y_test[mask_valid], pd.Series(y_pred_best[mask_valid]), author_test[mask_valid]
-)
-
-# Also load global per-creator breakdown if available
-pc_global_path = Path("results/per_creator_metrics_global.parquet")
-if pc_global_path.exists():
-    per_creator_global = pd.read_parquet(pc_global_path)
-    merged = per_creator_pc.merge(per_creator_global[["author_id","rmse"]],
-                                   on="author_id", suffixes=("_percreator", "_global"))
-else:
-    merged = per_creator_pc.rename(columns={"rmse": "rmse_percreator"})
-
-print(f"Per-creator {best_name}: median RMSE={per_creator_pc['rmse'].median():.4f}  "
-      f"mean={per_creator_pc['rmse'].mean():.4f}")
-
-fig, ax = plt.subplots(figsize=(10, 4))
-ax.hist(per_creator_pc["rmse"], bins=50, alpha=0.7, label=f"per-creator {best_name}", edgecolor="none")
-if "rmse_global" in merged.columns:
-    ax.hist(merged["rmse_global"], bins=50, alpha=0.5, label="global XGB", edgecolor="none")
-ax.axvline(rmse_zero, color="orange", linestyle=":", linewidth=1.5, label="predict_0")
-ax.axvline(per_creator_pc["rmse"].median(), color="blue", linestyle="--", linewidth=1, label="per-creator median")
-ax.set_xlabel("Per-creator test RMSE")
-ax.set_ylabel("Number of creators")
-ax.set_title("RMSE distribution: per-creator models vs global")
-ax.legend()
-plt.tight_layout()
-plt.show()
-
-n_worse_test = (per_creator_pc["rmse"] > rmse_zero).sum()
-print(f"Creators where per-creator model > predict_0 on test: {n_worse_test} / {len(per_creator_pc)}")
-"""
-
-NB05_SIZE_MD = """\
-## 6. Quality vs Creator Size
-"""
-
-NB05_SIZE = """\
-# Attach n_train and worse_than_zero flag to per-creator metrics
-n_train_map = {m.author_id: m.n_train for m in best_models.values()}
-worse_map   = {m.author_id: m.worse_than_zero for m in best_models.values()}
-per_creator_pc["n_train"]       = per_creator_pc["author_id"].map(n_train_map)
-per_creator_pc["worse_than_zero"] = per_creator_pc["author_id"].map(worse_map)
-
-fig, ax = plt.subplots(figsize=(9, 5))
-colors = per_creator_pc["worse_than_zero"].map({True: "red", False: "steelblue"})
-ax.scatter(per_creator_pc["n_train"], per_creator_pc["rmse"],
-           alpha=0.3, s=10, c=colors)
-ax.axhline(rmse_zero, color="orange", linestyle=":", linewidth=1.5, label="predict_0")
-ax.set_xlabel("Number of train videos")
-ax.set_ylabel("Test RMSE")
-ax.set_title(f"Test RMSE vs creator train size ({best_name} per-creator)")
-ax.legend()
-plt.tight_layout()
-plt.show()
-
-# Bin by creator size
-bins = [0, 50, 100, 200, 500, 10000]
-labels = ["24-50", "51-100", "101-200", "201-500", "500+"]
-per_creator_pc["size_bin"] = pd.cut(per_creator_pc["n_train"], bins=bins, labels=labels)
-size_summary = per_creator_pc.groupby("size_bin", observed=True)["rmse"].agg(["mean", "median", "count"])
-display(size_summary.style.format({"mean": "{:.4f}", "median": "{:.4f}"}))
-"""
-
-NB05_SAVE_MD = """\
-## 7. Save Artefacts
-"""
-
-NB05_SAVE = """\
-import datetime
-from creator_analytics.evaluate import log_experiment, save_metrics
-
-today = datetime.date.today().isoformat()
-exp_path = config["paths"].get("experiments_log", "results/experiments.md")
-metrics_path = config["paths"].get("metrics", "results/metrics.json")
-
-n_worse_rf_cv  = sum(m.worse_than_zero for m in rf_models.values())
-n_worse_xgb_cv = sum(m.worse_than_zero for m in xgb_models.values())
-
-log_experiment(exp_path, "per_creator_RF",  today, "non_constant_per_creator",
-               "RF_per_creator",  rf_cfg,  float("nan"), m_rf,
-               f"worse_than_zero_cv={n_worse_rf_cv}/{len(rf_models)}")
-log_experiment(exp_path, "per_creator_XGB", today, "non_constant_per_creator",
-               "XGB_per_creator", xgb_cfg, float("nan"), m_xgb,
-               f"worse_than_zero_cv={n_worse_xgb_cv}/{len(xgb_models)}")
-
-save_metrics({
-    "per_creator_rf_test_rmse":           m_rf["rmse"],
-    "per_creator_rf_test_r2":             m_rf["r2"],
-    "per_creator_rf_worse_than_zero_cv":  n_worse_rf_cv,
-    "per_creator_xgb_test_rmse":          m_xgb["rmse"],
-    "per_creator_xgb_test_r2":            m_xgb["r2"],
-    "per_creator_xgb_worse_than_zero_cv": n_worse_xgb_cv,
-    "per_creator_winner":                 best_name,
-}, metrics_path)
-
-# Save predictions from winner
-pred_path = Path("results/predictions_per_creator.parquet")
-pred_path.parent.mkdir(parents=True, exist_ok=True)
-pd.DataFrame({
-    "y_true":    y_test.values,
-    "y_pred":    y_pred_best,
-    "author_id": author_test.values,
-}).to_parquet(str(pred_path), index=False)
-
-per_creator_pc.to_parquet("results/per_creator_metrics_percreator.parquet", index=False)
-
-# Save models
-for author_id, m in rf_models.items():
-    m.save(f"models/per_creator/RF/{author_id}.joblib")
-for author_id, m in xgb_models.items():
-    m.save(f"models/per_creator/XGB/{author_id}.joblib")
-
-print(f"Saved {len(rf_models)} RF + {len(xgb_models)} XGB creator models")
-print(f"Saved: results/predictions_per_creator.parquet")
-print(f"Saved: results/experiments.md")
-"""
-
-NB05_SUMMARY_MD = """\
-## Summary
-
-### Chosen configuration
-
-**Why conservative?**  Creators have 24–1 700 train videos; on small sets a
-deep unconstrained model overfits immediately.  The config is chosen by
-averaging CV RMSE over 100 diverse creators — short trees, strong leaf
-regularisation.
-
-### Global metrics summary
-
-| Model | Test RMSE | Test R² | Test Spearman |
-|-------|-----------|---------|---------------|
-"""
-
-NB05_SUMMARY = """\
-print("=== Chosen configs ===")
-print("RF :", {k: v for k, v in rf_cfg.items() if k != "n_estimators"})
-print("XGB:", {k: v for k, v in xgb_cfg.items() if k not in ("n_estimators", "subsample", "colsample_bytree")})
-print()
-
-final_table = pd.DataFrame({
-    "predict_0":            {"test_rmse": rmse_zero,   "test_r2": float("nan"), "test_spearman": float("nan")},
-    "predict_creator_mean": {"test_rmse": rmse_cmean,  "test_r2": float("nan"), "test_spearman": float("nan")},
-    "global_XGB":           {"test_rmse": m_global.get("rmse", float("nan")),
-                              "test_r2":   m_global.get("r2",   float("nan")),
-                              "test_spearman": m_global.get("spearman", float("nan"))},
-    "per_creator_RF":       {"test_rmse": m_rf["rmse"],  "test_r2": m_rf["r2"],  "test_spearman": m_rf["spearman"]},
-    "per_creator_XGB":      {"test_rmse": m_xgb["rmse"], "test_r2": m_xgb["r2"], "test_spearman": m_xgb["spearman"]},
-}).T
-display(final_table.style.format("{:.4f}", na_rep="—"))
-
-n_worse_test = (per_creator_pc["rmse"] > rmse_zero).sum()
-print(f"\\nWinner: {best_name}")
-print(f"Creators with test RMSE > predict_0: {n_worse_test} / {len(per_creator_pc)}")
-print(f"Creators with CV RMSE > predict_0: RF={n_worse_rf_cv} / {len(rf_models)},  XGB={n_worse_xgb_cv} / {len(xgb_models)}")
-"""
-
-nb05 = make_nb([
-    new_markdown_cell(NB05_GOAL),
-    new_code_cell(COLAB_GUARD),
-    new_code_cell(SETUP_COMMON),
-    new_markdown_cell("## 0. Load Data"),
-    new_code_cell(NB05_LOAD),
-    new_markdown_cell(NB05_CONFIG_MD),
-    new_code_cell(NB05_CONFIG),
-    new_markdown_cell(NB05_TRAIN_MD),
-    new_code_cell(NB05_TRAIN),
-    new_markdown_cell(NB05_EVAL_MD),
-    new_code_cell(NB05_EVAL),
-    new_markdown_cell(NB05_COMPARE_MD),
-    new_code_cell(NB05_COMPARE),
-    new_markdown_cell(NB05_DIST_MD),
-    new_code_cell(NB05_DIST),
-    new_markdown_cell(NB05_SIZE_MD),
-    new_code_cell(NB05_SIZE),
-    new_markdown_cell(NB05_SAVE_MD),
-    new_code_cell(NB05_SAVE),
-    new_markdown_cell(NB05_SUMMARY_MD),
-    new_code_cell(NB05_SUMMARY),
-])
-
-nbformat.write(nb05, NB_DIR / "05-per-creator-models.ipynb")
-print("Written notebooks/05-per-creator-models.ipynb")
 
 
 # ================================================================== #
