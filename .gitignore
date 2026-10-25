@@ -238,3 +238,4 @@ models/*
 
 # Env secrets
 .env
+.DS_Store
