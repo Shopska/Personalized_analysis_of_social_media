@@ -85,7 +85,8 @@ def test_relative_uses_train_only_not_test(eng, vids):
 
     v1 = result[result["video_id"] == "v1"].iloc[0]
     assert np.isclose(v1["target"], 0.0, atol=1e-10), (
-        "Train video v1 should have relative target 0.0 when it's the only train video for its creator"
+        "Train video v1 should have relative target 0.0 when it's the only "
+        "train video for its creator"
     )
 
     v2 = result[result["video_id"] == "v2"].iloc[0]

@@ -26,25 +26,25 @@ from creator_analytics.models import (
     trivial_zero_rmse,
 )
 
-
 # ------------------------------------------------------------------ #
 # Helpers                                                              #
 # ------------------------------------------------------------------ #
 
+
 def _make_tiny_train(n: int = 60, n_creators: int = 6, seed: int = 0):
     """Minimal feature DataFrame + target + author_ids."""
     rng = np.random.RandomState(seed)
-    author_ids = pd.Series(
-        [f"creator_{i % n_creators}" for i in range(n)], name="author_id"
+    author_ids = pd.Series([f"creator_{i % n_creators}" for i in range(n)], name="author_id")
+    X = pd.DataFrame(
+        {
+            "duration_log": rng.rand(n).astype("float64"),
+            "desc_len": rng.randint(0, 200, n).astype("float64"),
+            "publish_hour": rng.randint(0, 24, n).astype("float64"),
+            "ratio_9_16": rng.randint(0, 2, n).astype("float64"),
+            "topic_music": rng.randint(0, 2, n).astype("float64"),
+            "dominant_joy": rng.randint(0, 2, n).astype("float64"),
+        }
     )
-    X = pd.DataFrame({
-        "duration_log":  rng.rand(n).astype("float64"),
-        "desc_len":      rng.randint(0, 200, n).astype("float64"),
-        "publish_hour":  rng.randint(0, 24, n).astype("float64"),
-        "ratio_9_16":    rng.randint(0, 2, n).astype("float64"),
-        "topic_music":   rng.randint(0, 2, n).astype("float64"),
-        "dominant_joy":  rng.randint(0, 2, n).astype("float64"),
-    })
     y = pd.Series(rng.randn(n), name="target")
     return X, y, author_ids
 
@@ -52,6 +52,7 @@ def _make_tiny_train(n: int = 60, n_creators: int = 6, seed: int = 0):
 # ------------------------------------------------------------------ #
 # Signature tests: no test data in search_* signatures                 #
 # ------------------------------------------------------------------ #
+
 
 def test_search_random_forest_has_no_test_params():
     sig = inspect.signature(search_random_forest)
@@ -71,17 +72,20 @@ def test_search_xgboost_has_no_test_params():
 # prepare_X                                                            #
 # ------------------------------------------------------------------ #
 
+
 def test_prepare_x_drops_meta_cols():
-    df = pd.DataFrame({
-        "video_id": ["a", "b"],
-        "author_id": ["c1", "c1"],
-        "split": ["train", "test"],
-        "create_dt": [None, None],
-        "target_abs": [1.0, 2.0],
-        "target_rel": [0.1, 0.2],
-        "creator_baseline": [1.0, 1.0],
-        "duration_log": [1.5, 2.0],
-    })
+    df = pd.DataFrame(
+        {
+            "video_id": ["a", "b"],
+            "author_id": ["c1", "c1"],
+            "split": ["train", "test"],
+            "create_dt": [None, None],
+            "target_abs": [1.0, 2.0],
+            "target_rel": [0.1, 0.2],
+            "creator_baseline": [1.0, 1.0],
+            "duration_log": [1.5, 2.0],
+        }
+    )
     X = prepare_X(df)
     for col in META_COLS:
         assert col not in X.columns
@@ -89,11 +93,13 @@ def test_prepare_x_drops_meta_cols():
 
 
 def test_prepare_x_drop_vs_creator():
-    df = pd.DataFrame({
-        "duration_log": [1.0, 2.0],
-        "duration_log_vs_creator": [0.1, -0.1],
-        "publish_hour": [10.0, 12.0],
-    })
+    df = pd.DataFrame(
+        {
+            "duration_log": [1.0, 2.0],
+            "duration_log_vs_creator": [0.1, -0.1],
+            "publish_hour": [10.0, 12.0],
+        }
+    )
     X_global = prepare_X(df, drop_vs_creator=False)
     X_pc = prepare_X(df, drop_vs_creator=True)
     assert "duration_log_vs_creator" in X_global.columns
@@ -104,6 +110,7 @@ def test_prepare_x_drop_vs_creator():
 # ------------------------------------------------------------------ #
 # make_cv_splits                                                        #
 # ------------------------------------------------------------------ #
+
 
 def test_make_cv_splits_count():
     author_ids = pd.Series(["a"] * 20 + ["b"] * 20 + ["c"] * 20)
@@ -131,6 +138,7 @@ def test_make_cv_splits_no_overlap_within_fold():
 # Trivial baselines                                                     #
 # ------------------------------------------------------------------ #
 
+
 def test_trivial_zero_rmse_all_zeros():
     y = pd.Series([0.0, 0.0, 0.0])
     assert trivial_zero_rmse(y) == pytest.approx(0.0)
@@ -156,6 +164,7 @@ def test_trivial_creator_mean_perfect():
 # compute_metrics                                                       #
 # ------------------------------------------------------------------ #
 
+
 def test_compute_metrics_returns_all_keys():
     y = pd.Series([1.0, 2.0, 3.0, 4.0])
     yp = pd.Series([1.1, 2.1, 2.9, 4.2])
@@ -180,6 +189,7 @@ def test_compute_metrics_perfect():
 # ------------------------------------------------------------------ #
 # compute_per_creator_metrics — n_test invariant                       #
 # ------------------------------------------------------------------ #
+
 
 def test_per_creator_n_test_sums_to_global():
     rng = np.random.RandomState(7)
@@ -216,6 +226,7 @@ def test_per_creator_single_creator():
 # search_random_forest smoke test                                       #
 # ------------------------------------------------------------------ #
 
+
 def test_search_random_forest_returns_trained_model():
     X, y, author_ids = _make_tiny_train(n=60, n_creators=6)
     model = search_random_forest(X, y, author_ids, n_splits=3, seed=42, n_iter=2)
@@ -235,6 +246,7 @@ def test_search_random_forest_predict_shape():
 # search_xgboost smoke test                                            #
 # ------------------------------------------------------------------ #
 
+
 def test_search_xgboost_returns_trained_model():
     X, y, author_ids = _make_tiny_train(n=60, n_creators=6)
     model = search_xgboost(X, y, author_ids, n_splits=3, seed=42, n_iter=2)
@@ -245,8 +257,9 @@ def test_search_xgboost_returns_trained_model():
 def test_search_xgboost_exclude_col():
     X, y, author_ids = _make_tiny_train(n=60, n_creators=6)
     X["follower_count_log"] = 1.0
-    model = search_xgboost(X, y, author_ids, n_splits=3, seed=42, n_iter=2,
-                           exclude_cols=["follower_count_log"])
+    model = search_xgboost(
+        X, y, author_ids, n_splits=3, seed=42, n_iter=2, exclude_cols=["follower_count_log"]
+    )
     assert "follower_count_log" not in model.feature_names
     assert "no_follower" in model.model_name
 
@@ -261,6 +274,7 @@ def test_search_xgboost_predict_shape():
 # ------------------------------------------------------------------ #
 # TrainedModel save/load round-trip                                    #
 # ------------------------------------------------------------------ #
+
 
 def test_trained_model_save_load(tmp_path):
     X, y, author_ids = _make_tiny_train(n=60, n_creators=6)

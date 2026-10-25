@@ -4,22 +4,23 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
 
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr, wilcoxon
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
-
 # ------------------------------------------------------------------ #
 # Scalar metrics                                                       #
 # ------------------------------------------------------------------ #
 
+
 def rmse(y_true: np.ndarray | pd.Series, y_pred: np.ndarray | pd.Series) -> float:
-    return float(np.sqrt(mean_squared_error(
-        np.asarray(y_true, dtype=float), np.asarray(y_pred, dtype=float)
-    )))
+    return float(
+        np.sqrt(
+            mean_squared_error(np.asarray(y_true, dtype=float), np.asarray(y_pred, dtype=float))
+        )
+    )
 
 
 def compute_metrics(
@@ -31,17 +32,18 @@ def compute_metrics(
     yp = np.asarray(y_pred, dtype=float)
     rho, _ = spearmanr(yt, yp)
     return {
-        "rmse":     float(np.sqrt(mean_squared_error(yt, yp))),
-        "mae":      float(mean_absolute_error(yt, yp)),
-        "r2":       float(r2_score(yt, yp)),
+        "rmse": float(np.sqrt(mean_squared_error(yt, yp))),
+        "mae": float(mean_absolute_error(yt, yp)),
+        "r2": float(r2_score(yt, yp)),
         "spearman": float(rho),
-        "n":        int(len(yt)),
+        "n": int(len(yt)),
     }
 
 
 # ------------------------------------------------------------------ #
 # Per-creator breakdown                                                #
 # ------------------------------------------------------------------ #
+
 
 def compute_per_creator_metrics(
     y_true: pd.Series,
@@ -58,19 +60,22 @@ def compute_per_creator_metrics(
         yp = y_pred.loc[idx]
         n = len(yt)
         rho = float(spearmanr(yt, yp).statistic) if n >= 2 else float("nan")
-        rows.append({
-            "author_id": author,
-            "n_test":    n,
-            "rmse":      rmse(yt, yp),
-            "mae":       float(mean_absolute_error(yt, yp)),
-            "spearman":  rho,
-        })
+        rows.append(
+            {
+                "author_id": author,
+                "n_test": n,
+                "rmse": rmse(yt, yp),
+                "mae": float(mean_absolute_error(yt, yp)),
+                "spearman": rho,
+            }
+        )
     return pd.DataFrame(rows).sort_values("author_id").reset_index(drop=True)
 
 
 # ------------------------------------------------------------------ #
 # Paired comparison (Wilcoxon + bootstrap CI)                          #
 # ------------------------------------------------------------------ #
+
 
 def _creator_size_bin(n: int) -> str:
     if n < 50:
@@ -110,7 +115,7 @@ def paired_comparison(
 
     err_a = (yt - pa) ** 2
     err_b = (yt - pb) ** 2
-    diff  = err_a - err_b  # positive → A worse
+    diff = err_a - err_b  # positive → A worse
 
     r_a = float(np.sqrt(err_a.mean()))
     r_b = float(np.sqrt(err_b.mean()))
@@ -122,12 +127,14 @@ def paired_comparison(
 
     rng = np.random.RandomState(seed)
     n = len(err_a)
-    boot_diffs = np.array([
-        np.sqrt(err_a[idx].mean()) - np.sqrt(err_b[idx].mean())
-        for _ in range(n_bootstrap)
-        for idx in [rng.choice(n, n, replace=True)]
-    ])
-    ci_low  = float(np.percentile(boot_diffs, 2.5))
+    boot_diffs = np.array(
+        [
+            np.sqrt(err_a[idx].mean()) - np.sqrt(err_b[idx].mean())
+            for _ in range(n_bootstrap)
+            for idx in [rng.choice(n, n, replace=True)]
+        ]
+    )
+    ci_low = float(np.percentile(boot_diffs, 2.5))
     ci_high = float(np.percentile(boot_diffs, 97.5))
 
     win_rate_a = float((np.abs(yt - pa) < np.abs(yt - pb)).mean())
@@ -141,18 +148,20 @@ def paired_comparison(
             strat[bucket] = {"wins_a": 0, "total": 0}
         wins = int((np.abs(yt[idx] - pa[idx]) < np.abs(yt[idx] - pb[idx])).sum())
         strat[bucket]["wins_a"] += wins
-        strat[bucket]["total"]  += len(idx)
+        strat[bucket]["total"] += len(idx)
 
-    stratified_win_rate = {
-        b: v["wins_a"] / v["total"] for b, v in strat.items() if v["total"] > 0
-    }
+    stratified_win_rate = {b: v["wins_a"] / v["total"] for b, v in strat.items() if v["total"] > 0}
 
     return {
-        "name_a": name_a, "name_b": name_b,
-        "rmse_a": r_a, "rmse_b": r_b,
+        "name_a": name_a,
+        "name_b": name_b,
+        "rmse_a": r_a,
+        "rmse_b": r_b,
         "rmse_diff": r_a - r_b,
-        "wilcoxon_stat": float(stat), "wilcoxon_pvalue": float(pval),
-        "bootstrap_ci_low": ci_low, "bootstrap_ci_high": ci_high,
+        "wilcoxon_stat": float(stat),
+        "wilcoxon_pvalue": float(pval),
+        "bootstrap_ci_low": ci_low,
+        "bootstrap_ci_high": ci_high,
         "win_rate_a": win_rate_a,
         "stratified_win_rate": stratified_win_rate,
     }
@@ -161,6 +170,7 @@ def paired_comparison(
 # ------------------------------------------------------------------ #
 # Leakage check                                                        #
 # ------------------------------------------------------------------ #
+
 
 def leakage_check(
     model_predict_fn,
@@ -183,15 +193,16 @@ def leakage_check(
         shuffled_r2s.append(float(r2_score(y_shuf, preds)))
 
     return {
-        "r2_real":          r2_real,
+        "r2_real": r2_real,
         "r2_shuffled_mean": float(np.mean(shuffled_r2s)),
-        "r2_shuffled_std":  float(np.std(shuffled_r2s)),
+        "r2_shuffled_std": float(np.std(shuffled_r2s)),
     }
 
 
 # ------------------------------------------------------------------ #
 # Experiments log                                                      #
 # ------------------------------------------------------------------ #
+
 
 def log_experiment(
     path: str | Path,
@@ -214,15 +225,17 @@ def log_experiment(
     path.parent.mkdir(parents=True, exist_ok=True)
     params_str = (
         json.dumps(params, ensure_ascii=False)[:100]
-        if isinstance(params, dict) else str(params)[:100]
+        if isinstance(params, dict)
+        else str(params)[:100]
     )
-    cv_str    = f"{cv_rmse:.4f}" if cv_rmse is not None else "n/a"
-    time_str  = f"{train_time_s:.0f}s" if train_time_s is not None else "n/a"
-    win_str   = f"{comparison['win_rate_a']:.3f}" if comparison else "n/a"
-    pval_str  = f"{comparison['wilcoxon_pvalue']:.4f}" if comparison else "n/a"
-    ci_str    = (
+    cv_str = f"{cv_rmse:.4f}" if cv_rmse is not None else "n/a"
+    time_str = f"{train_time_s:.0f}s" if train_time_s is not None else "n/a"
+    win_str = f"{comparison['win_rate_a']:.3f}" if comparison else "n/a"
+    pval_str = f"{comparison['wilcoxon_pvalue']:.4f}" if comparison else "n/a"
+    ci_str = (
         f"[{comparison['bootstrap_ci_low']:.4f}, {comparison['bootstrap_ci_high']:.4f}]"
-        if comparison else "n/a"
+        if comparison
+        else "n/a"
     )
 
     line = (
@@ -251,7 +264,6 @@ def log_experiment(
             return  # idempotent: skip if name already logged
         with open(path, "a", encoding="utf-8") as f:
             f.write(line)
-
 
 
 def save_metrics(metrics: dict, path: str | Path) -> None:

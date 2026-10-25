@@ -41,23 +41,15 @@ _REQUIRED = [
 # Cached loaders                                                      #
 # ------------------------------------------------------------------ #
 
+
 @st.cache_data
 def load_creator_stats(root: str) -> pd.DataFrame:
     """Load per-creator train/test counts and size_bin from dataset_index."""
     idx = pd.read_parquet(Path(root) / "data" / "processed" / "dataset_index.parquet")
-    train_counts = (
-        idx[idx["split"] == "train"]
-        .groupby("author_id").size().rename("n_train")
-    )
-    test_counts = (
-        idx[idx["split"] == "test"]
-        .groupby("author_id").size().rename("n_test")
-    )
+    train_counts = idx[idx["split"] == "train"].groupby("author_id").size().rename("n_train")
+    test_counts = idx[idx["split"] == "test"].groupby("author_id").size().rename("n_test")
     stats = (
-        train_counts.to_frame()
-        .join(test_counts, how="outer")
-        .fillna(0).astype(int)
-        .reset_index()
+        train_counts.to_frame().join(test_counts, how="outer").fillna(0).astype(int).reset_index()
     )
     stats["size_bin"] = stats["n_train"].apply(_size_bin)
     return stats
@@ -86,9 +78,7 @@ def load_shap_data(root: str) -> tuple[pd.DataFrame | None, pd.DataFrame, pd.Ser
     )
 
     idx = pd.read_parquet(r / "data" / "processed" / "dataset_index.parquet")
-    auth_test = (
-        idx[idx["split"] == "test"]["author_id"].reset_index(drop=True)
-    )
+    auth_test = idx[idx["split"] == "test"]["author_id"].reset_index(drop=True)
     return shap_df, global_importance, auth_test
 
 
@@ -101,12 +91,14 @@ def load_predictions(root: str) -> pd.DataFrame | None:
 @st.cache_resource
 def load_global_model(root: str):
     import joblib
+
     return joblib.load(Path(root) / "models" / "global_xgb.joblib")
 
 
 # ------------------------------------------------------------------ #
 # Helpers                                                             #
 # ------------------------------------------------------------------ #
+
 
 def _size_bin(n: int) -> str:
     if n < 50:
@@ -163,6 +155,7 @@ def _signed_bar_chart(feat_names: list[str], shap_vals: list[float]):
 # Main app                                                            #
 # ------------------------------------------------------------------ #
 
+
 def main() -> None:
     st.set_page_config(
         page_title="Creator Analytics",
@@ -180,14 +173,14 @@ def main() -> None:
         )
         st.stop()
 
-    creator_stats                        = load_creator_stats(str(ROOT))
+    creator_stats = load_creator_stats(str(ROOT))
     shap_df, global_importance, auth_test = load_shap_data(str(ROOT))
-    preds_global                         = load_predictions(str(ROOT))
-    shap_available                       = shap_df is not None
+    preds_global = load_predictions(str(ROOT))
+    shap_available = shap_df is not None
 
-    all_aids       = sorted(creator_stats["author_id"].unique())
+    all_aids = sorted(creator_stats["author_id"].unique())
     creator_labels = {aid: f"Creator {i+1:03d}" for i, aid in enumerate(all_aids)}
-    label_to_aid   = {v: k for k, v in creator_labels.items()}
+    label_to_aid = {v: k for k, v in creator_labels.items()}
 
     def _display_label(aid: str) -> str:
         row = creator_stats[creator_stats["author_id"] == aid].iloc[0]
@@ -198,10 +191,10 @@ def main() -> None:
         st.title("📊 Creator Analytics")
         st.caption("Персоналізований аналіз контент-стратегії TikTok-креаторів на основі SHAP.")
 
-        display_options  = [_display_label(aid) for aid in all_aids]
+        display_options = [_display_label(aid) for aid in all_aids]
         selected_display = st.selectbox("Оберіть креатора:", display_options, index=0)
-        selected_label   = selected_display.split(" (")[0]
-        author_id        = label_to_aid[selected_label]
+        selected_label = selected_display.split(" (")[0]
+        author_id = label_to_aid[selected_label]
 
         meta_row = creator_stats[creator_stats["author_id"] == author_id].iloc[0]
 
@@ -223,7 +216,7 @@ def main() -> None:
 
     # -------- SHAP context (works without SHAP files) --------
     n_train = int(meta_row["n_train"])
-    n_test  = int(meta_row["n_test"])
+    n_test = int(meta_row["n_test"])
     size_bin = str(meta_row["size_bin"])
 
     if shap_available and auth_test is not None:
@@ -259,8 +252,7 @@ def main() -> None:
             col_l, col_r = st.columns(2)
 
             creator_top10 = (
-                shap_df[auth_test == author_id].abs().mean()
-                .sort_values(ascending=False).head(10)
+                shap_df[auth_test == author_id].abs().mean().sort_values(ascending=False).head(10)
             )
             with col_l:
                 if len(creator_top10) > 0:
@@ -343,7 +335,9 @@ def main() -> None:
         st.subheader("🎬 Прогноз для конкретного відео")
 
         if preds_global is not None:
-            creator_preds = preds_global[preds_global["author_id"] == author_id].reset_index(drop=True)
+            creator_preds = preds_global[preds_global["author_id"] == author_id].reset_index(
+                drop=True
+            )
         else:
             creator_preds = pd.DataFrame()
 
@@ -358,20 +352,18 @@ def main() -> None:
                 st.session_state[f"video_idx_{author_id}"] = 0
 
             if st.button("🔀 Інше відео"):
-                st.session_state[f"video_idx_{author_id}"] = int(
-                    np.random.randint(0, n_videos)
-                )
+                st.session_state[f"video_idx_{author_id}"] = int(np.random.randint(0, n_videos))
 
             video_idx = st.session_state[f"video_idx_{author_id}"]
-            row   = creator_preds.iloc[video_idx]
+            row = creator_preds.iloc[video_idx]
             y_true = float(row["y_true"])
             y_pred = float(row["y_pred"])
-            error  = y_pred - y_true
+            error = y_pred - y_true
 
             vc1, vc2, vc3 = st.columns(3)
             vc1.metric("Фактичний результат (відн.)", f"{y_true:+.3f}")
-            vc2.metric("Прогноз (глобальна модель)",  f"{y_pred:+.3f}")
-            vc3.metric("Похибка",                     f"{error:+.3f}")
+            vc2.metric("Прогноз (глобальна модель)", f"{y_pred:+.3f}")
+            vc3.metric("Похибка", f"{error:+.3f}")
 
             st.caption(f"Відео {video_idx + 1} з {n_videos} тест-відео цього креатора.")
 
@@ -382,8 +374,8 @@ def main() -> None:
                 try:
                     creator_shap_vids = shap_df[(auth_test == author_id).values]
                     if len(creator_shap_vids) > 0:
-                        vid_i     = video_idx % len(creator_shap_vids)
-                        shap_row  = creator_shap_vids.iloc[vid_i]
+                        vid_i = video_idx % len(creator_shap_vids)
+                        shap_row = creator_shap_vids.iloc[vid_i]
                         top10_idx = shap_row.abs().sort_values(ascending=False).head(10).index
                         fig = _signed_bar_chart(
                             list(top10_idx),

@@ -17,8 +17,7 @@ Note: SHAP data is optional. If creator_shap_rows is empty / None, top_features
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 import pandas as pd
 
@@ -76,12 +75,14 @@ def build_shap_context(
             direction: str | None = "+" if signed > 0 else "-"
             raw_label = describe_feature(str(fname))
             label = raw_label[:60] if len(raw_label) > 60 else raw_label
-            top_feats.append({
-                "feature":        str(fname),
-                "label":          label,
-                "mean_abs_shap":  float(mean_abs),
-                "direction":      direction,
-            })
+            top_feats.append(
+                {
+                    "feature": str(fname),
+                    "label": label,
+                    "mean_abs_shap": float(mean_abs),
+                    "direction": direction,
+                }
+            )
 
     global_top5 = global_importance.head(5)["feature"].tolist()
     creator_top_names = [f["feature"] for f in top_feats]
@@ -118,7 +119,7 @@ _SYSTEM_PROMPT = """\
 
 def _build_llm_prompt(ctx: ShapContext) -> str:
     lines = [
-        f"Статистика креатора:",
+        "Статистика креатора:",
         f"  Навчальних відео: {ctx.n_train}  |  Група розміру: {ctx.size_bin}",
     ]
 
@@ -129,7 +130,10 @@ def _build_llm_prompt(ctx: ShapContext) -> str:
         )
 
     if ctx.top_features:
-        lines.append(f"\nНайважливіші ознаки цього креатора (з глобальної моделі, топ-{len(ctx.top_features)}):")
+        lines.append(
+            "\nНайважливіші ознаки цього креатора "
+            f"(з глобальної моделі, топ-{len(ctx.top_features)}):"
+        )
         for i, f in enumerate(ctx.top_features, 1):
             dir_str = ""
             if f["direction"] == "+":
@@ -138,7 +142,9 @@ def _build_llm_prompt(ctx: ShapContext) -> str:
                 dir_str = " → нижчі значення асоціюються з кращим результатом"
             lines.append(f"  {i}. {f['feature']} («{f['label']}»){dir_str}")
     else:
-        lines.append("\nДані SHAP для окремих відео ще не пораховані. Використай глобальні топ-5 ознак.")
+        lines.append(
+            "\nДані SHAP для окремих відео ще не пораховані. Використай глобальні топ-5 ознак."
+        )
 
     global_str = ", ".join(ctx.global_top_features)
     lines.append(f"\nГлобальні топ-5 ознак: {global_str}")
@@ -172,6 +178,7 @@ def _call_llm(ctx: ShapContext) -> list[str]:
     )
     text = response.content[0].text.strip()
     import re
+
     items = [s.strip() for s in re.split(r"\n{2,}|\n(?=\d+[\.\)])", text) if s.strip()]
     return items[:4] if items else [text]
 
@@ -180,13 +187,18 @@ def _call_llm(ctx: ShapContext) -> list[str]:
 # Template fallback                                                    #
 # ------------------------------------------------------------------ #
 
+
 def _fallback_recommendations(ctx: ShapContext) -> list[str]:
     recs: list[str] = []
 
-    features_to_use = ctx.top_features if ctx.top_features else [
-        {"feature": f, "label": describe_feature(f), "direction": None}
-        for f in ctx.global_top_features[:3]
-    ]
+    features_to_use = (
+        ctx.top_features
+        if ctx.top_features
+        else [
+            {"feature": f, "label": describe_feature(f), "direction": None}
+            for f in ctx.global_top_features[:3]
+        ]
+    )
 
     for feat in features_to_use[:3]:
         label = feat["label"]
@@ -220,6 +232,7 @@ def _fallback_recommendations(ctx: ShapContext) -> list[str]:
 # ------------------------------------------------------------------ #
 # Public entry point                                                   #
 # ------------------------------------------------------------------ #
+
 
 def get_recommendations(ctx: ShapContext, use_llm: bool = True) -> list[str]:
     """Return 2–4 Ukrainian recommendation strings for a creator.

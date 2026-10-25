@@ -83,8 +83,10 @@ check(result.returncode == 0, f"pytest: {summary}")
 if "videos" in tables:
     print("5. Креатори (звір з data/README.md)")
     counts = tables["videos"]["author_id"].value_counts()
-    print(f"  креаторів: {len(counts)}, відео на креатора "
-          f"min/median/max: {counts.min()} / {counts.median():.0f} / {counts.max()}")
+    print(
+        f"  креаторів: {len(counts)}, відео на креатора "
+        f"min/median/max: {counts.min()} / {counts.median():.0f} / {counts.max()}"
+    )
     for threshold in (10, 20, 30, 50):
         kept = counts[counts >= threshold]
         print(f"  >= {threshold} відео: {len(kept)} креаторів, {kept.sum()} відео")

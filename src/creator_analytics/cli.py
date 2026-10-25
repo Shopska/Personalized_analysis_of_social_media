@@ -33,7 +33,9 @@ def cmd_data_summary(config: dict) -> int:
     logger.info("Raw dataset: %d videos, %d creators", len(df), df[author_column].nunique())
     logger.info(
         "With >= %d videos per creator: %d videos, %d creators",
-        min_videos, len(filtered), filtered[author_column].nunique(),
+        min_videos,
+        len(filtered),
+        filtered[author_column].nunique(),
     )
     return 0
 
@@ -41,6 +43,7 @@ def cmd_data_summary(config: dict) -> int:
 def _load_train_test(config: dict):
     """Shared data loading for train and evaluate commands."""
     import pandas as pd
+
     from creator_analytics.features import build_features
     from creator_analytics.models import prepare_X
     from creator_analytics.targets import build_target, get_nonmonotonic_video_ids
@@ -72,11 +75,10 @@ def _load_train_test(config: dict):
         feat_path.parent.mkdir(parents=True, exist_ok=True)
         features.to_parquet(str(feat_path), index=False)
 
-    rel_t = build_target(engagement, videos_f, day=14, mode="relative",
-                         train_video_ids=train_ids)
-    data = (features
-            .merge(videos_f[["video_id", "author_id"]], on="video_id")
-            .merge(rel_t, on="video_id"))
+    rel_t = build_target(engagement, videos_f, day=14, mode="relative", train_video_ids=train_ids)
+    data = features.merge(videos_f[["video_id", "author_id"]], on="video_id").merge(
+        rel_t, on="video_id"
+    )
 
     train_mask = data["video_id"].isin(train_ids)
     test_mask = data["video_id"].isin(test_ids)
@@ -96,10 +98,13 @@ def _load_train_test(config: dict):
 def cmd_train_global(config: dict) -> int:
     """Train RF and XGBoost (with/without follower); save best XGBoost model."""
     import datetime
+
     from creator_analytics.evaluate import log_experiment, save_metrics
     from creator_analytics.models import (
-        search_random_forest, search_xgboost,
-        trivial_zero_rmse, trivial_creator_mean,
+        search_random_forest,
+        search_xgboost,
+        trivial_creator_mean,
+        trivial_zero_rmse,
     )
 
     logger.info("Loading data …")
@@ -113,37 +118,71 @@ def cmd_train_global(config: dict) -> int:
     # Trivial baselines (computed on test — but they use no model)
     rmse_zero = trivial_zero_rmse(y_test)
     rmse_cmean, _ = trivial_creator_mean(y_train, author_train, y_test, author_test)
-    logger.info("Trivial predict_0 RMSE=%.4f  predict_creator_mean RMSE=%.4f", rmse_zero, rmse_cmean)
+    logger.info(
+        "Trivial predict_0 RMSE=%.4f  predict_creator_mean RMSE=%.4f", rmse_zero, rmse_cmean
+    )
 
     for name, rmse_val in [("predict_0", rmse_zero), ("predict_creator_mean", rmse_cmean)]:
-        log_experiment(exp_path, name, today, "none", name, {}, None,
-                       {"rmse": rmse_val, "r2": float("nan"), "spearman": float("nan")})
+        log_experiment(
+            exp_path,
+            name,
+            today,
+            "none",
+            name,
+            {},
+            None,
+            {"rmse": rmse_val, "r2": float("nan"), "spearman": float("nan")},
+        )
 
     # RandomForest
     logger.info("Searching RandomForest …")
-    rf_model = search_random_forest(X_train, y_train, author_train,
-                                    n_splits=n_splits, seed=seed)
-    log_experiment(exp_path, "RF_global", today, "all_54", "RandomForest",
-                   rf_model.params, rf_model.cv_rmse,
-                   {"rmse": float("nan"), "r2": float("nan"), "spearman": float("nan")},
-                   "CV only — run evaluate for test metrics")
+    rf_model = search_random_forest(X_train, y_train, author_train, n_splits=n_splits, seed=seed)
+    log_experiment(
+        exp_path,
+        "RF_global",
+        today,
+        "all_54",
+        "RandomForest",
+        rf_model.params,
+        rf_model.cv_rmse,
+        {"rmse": float("nan"), "r2": float("nan"), "spearman": float("nan")},
+        "CV only — run evaluate for test metrics",
+    )
 
     # XGBoost with follower
     logger.info("Searching XGBoost (all features) …")
-    xgb_with = search_xgboost(X_train, y_train, author_train,
-                               n_splits=n_splits, seed=seed)
-    log_experiment(exp_path, "XGB_global_with_follower", today, "all_54", "XGBoost",
-                   xgb_with.params, xgb_with.cv_rmse,
-                   {"rmse": float("nan"), "r2": float("nan"), "spearman": float("nan")})
+    xgb_with = search_xgboost(X_train, y_train, author_train, n_splits=n_splits, seed=seed)
+    log_experiment(
+        exp_path,
+        "XGB_global_with_follower",
+        today,
+        "all_54",
+        "XGBoost",
+        xgb_with.params,
+        xgb_with.cv_rmse,
+        {"rmse": float("nan"), "r2": float("nan"), "spearman": float("nan")},
+    )
 
     # XGBoost without follower
     logger.info("Searching XGBoost (no follower) …")
-    xgb_nof = search_xgboost(X_train, y_train, author_train,
-                              n_splits=n_splits, seed=seed,
-                              exclude_cols=["follower_count_log"])
-    log_experiment(exp_path, "XGB_global_no_follower", today, "all_54_no_follower", "XGBoost",
-                   xgb_nof.params, xgb_nof.cv_rmse,
-                   {"rmse": float("nan"), "r2": float("nan"), "spearman": float("nan")})
+    xgb_nof = search_xgboost(
+        X_train,
+        y_train,
+        author_train,
+        n_splits=n_splits,
+        seed=seed,
+        exclude_cols=["follower_count_log"],
+    )
+    log_experiment(
+        exp_path,
+        "XGB_global_no_follower",
+        today,
+        "all_54_no_follower",
+        "XGBoost",
+        xgb_nof.params,
+        xgb_nof.cv_rmse,
+        {"rmse": float("nan"), "r2": float("nan"), "spearman": float("nan")},
+    )
 
     # Save best XGBoost (with follower, usually better)
     best = xgb_with if xgb_with.cv_rmse <= xgb_nof.cv_rmse else xgb_nof
@@ -151,22 +190,30 @@ def cmd_train_global(config: dict) -> int:
     best.save(model_path)
     logger.info("Saved best model to %s (CV RMSE=%.4f)", model_path, best.cv_rmse)
 
-    save_metrics({
-        "trivial_predict_0_rmse": rmse_zero,
-        "trivial_creator_mean_rmse": rmse_cmean,
-        "rf_cv_rmse": rf_model.cv_rmse,
-        "xgb_with_follower_cv_rmse": xgb_with.cv_rmse,
-        "xgb_no_follower_cv_rmse": xgb_nof.cv_rmse,
-    }, metrics_path)
+    save_metrics(
+        {
+            "trivial_predict_0_rmse": rmse_zero,
+            "trivial_creator_mean_rmse": rmse_cmean,
+            "rf_cv_rmse": rf_model.cv_rmse,
+            "xgb_with_follower_cv_rmse": xgb_with.cv_rmse,
+            "xgb_no_follower_cv_rmse": xgb_nof.cv_rmse,
+        },
+        metrics_path,
+    )
     return 0
 
 
 def cmd_evaluate_global(config: dict) -> int:
     """Load saved model, evaluate on test set, save metrics + creator breakdown."""
     import datetime
+
     import pandas as pd
+
     from creator_analytics.evaluate import (
-        compute_metrics, compute_per_creator_metrics, log_experiment, save_metrics,
+        compute_metrics,
+        compute_per_creator_metrics,
+        log_experiment,
+        save_metrics,
     )
     from creator_analytics.models import TrainedModel
 
@@ -183,8 +230,13 @@ def cmd_evaluate_global(config: dict) -> int:
 
     y_pred = model.predict(X_test)
     metrics = compute_metrics(y_test, y_pred)
-    logger.info("Test  RMSE=%.4f  MAE=%.4f  R²=%.4f  Spearman=%.4f",
-                metrics["rmse"], metrics["mae"], metrics["r2"], metrics["spearman"])
+    logger.info(
+        "Test  RMSE=%.4f  MAE=%.4f  R²=%.4f  Spearman=%.4f",
+        metrics["rmse"],
+        metrics["mae"],
+        metrics["r2"],
+        metrics["spearman"],
+    )
 
     creator_metrics = compute_per_creator_metrics(y_test, pd.Series(y_pred), author_test)
     zero_rmse = float(y_test.std())
@@ -195,21 +247,34 @@ def cmd_evaluate_global(config: dict) -> int:
     exp_path = config["paths"].get("experiments_log", "results/experiments.md")
     metrics_path = config["paths"].get("metrics", "results/metrics.json")
 
-    log_experiment(exp_path, f"{model.model_name}_test", today,
-                   "all_54" if "no_follower" not in model.model_name else "no_follower",
-                   "XGBoost", model.params, model.cv_rmse, metrics)
+    log_experiment(
+        exp_path,
+        f"{model.model_name}_test",
+        today,
+        "all_54" if "no_follower" not in model.model_name else "no_follower",
+        "XGBoost",
+        model.params,
+        model.cv_rmse,
+        metrics,
+    )
 
-    save_metrics({
-        "global_xgb_test_rmse": metrics["rmse"],
-        "global_xgb_test_mae": metrics["mae"],
-        "global_xgb_test_r2": metrics["r2"],
-        "global_xgb_test_spearman": metrics["spearman"],
-    }, metrics_path)
+    save_metrics(
+        {
+            "global_xgb_test_rmse": metrics["rmse"],
+            "global_xgb_test_mae": metrics["mae"],
+            "global_xgb_test_r2": metrics["r2"],
+            "global_xgb_test_spearman": metrics["spearman"],
+        },
+        metrics_path,
+    )
 
-    pred_path = Path(config["paths"].get("predictions_global", "results/predictions_global.parquet"))
+    pred_path = Path(
+        config["paths"].get("predictions_global", "results/predictions_global.parquet")
+    )
     pred_path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame({"y_true": y_test.values, "y_pred": y_pred,
-                  "author_id": author_test.values}).to_parquet(str(pred_path), index=False)
+    pd.DataFrame(
+        {"y_true": y_test.values, "y_pred": y_pred, "author_id": author_test.values}
+    ).to_parquet(str(pred_path), index=False)
 
     creator_metrics_path = Path("results/creator_metrics_global.parquet")
     creator_metrics.to_parquet(str(creator_metrics_path), index=False)

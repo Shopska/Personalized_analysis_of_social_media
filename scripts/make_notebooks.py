@@ -13,8 +13,9 @@ Then execute them:
 """
 
 from pathlib import Path
+
 import nbformat
-from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
+from nbformat.v4 import new_code_cell, new_markdown_cell, new_notebook
 
 NB_DIR = Path("notebooks")
 
@@ -262,45 +263,75 @@ fig.savefig(FIGS / "nb01_engagement_distributions.png", dpi=120, bbox_inches="ti
 plt.show()
 """
 
-NB01_INTERP_LOAD = """\
-**Result:** All three tables load without errors: 209,543 videos (175.1 MB), 278,433 creator-daily snapshots (3.1 MB), 6,068,955 engagement rows (31.8 MB).
-**Takeaway:** The engagement table is ~29× the video count, consistent with ~29 daily snapshots per video. Data download succeeded cleanly; all tables are at expected sizes.
-"""
+NB01_INTERP_LOAD = (
+    "**Result:** All three tables load without errors: 209,543 videos (175.1 MB), "
+    "278,433 creator-daily snapshots (3.1 MB), 6,068,955 engagement rows (31.8 MB).\n"
+    "**Takeaway:** The engagement table is ~29× the video count, consistent with "
+    "~29 daily snapshots per video. Data download succeeded cleanly; all tables "
+    "are at expected sizes.\n"
+)
 
-NB01_INTERP_SCHEMA = """\
-**Result:** Notable nulls: `transcript` 60.3 %, `sticker_text` 52.8 %, `music_album` 77.6 %. `enterprise_verified` in `creator_daily` is 100 % null. Text statistics (`word_count`, `speaking_rate`, etc.) are 37.9 % null — exactly the videos missing transcripts. `engagement_daily` has 0 nulls in any column.
-**Takeaway:** `enterprise_verified` must be dropped entirely. The joint-missingness pattern for text stats will turn out to be a data-collection artifact tied to publish month, not a content signal — confirmed in NB03.
-"""
+NB01_INTERP_SCHEMA = (
+    "**Result:** Notable nulls: `transcript` 60.3 %, `sticker_text` 52.8 %, "
+    "`music_album` 77.6 %. `enterprise_verified` in `creator_daily` is 100 % null. "
+    "Text statistics (`word_count`, `speaking_rate`, etc.) are 37.9 % null "
+    "— exactly the videos missing transcripts. `engagement_daily` has 0 nulls "
+    "in any column.\n"
+    "**Takeaway:** `enterprise_verified` must be dropped entirely. "
+    "The joint-missingness pattern for text stats will turn out to be a "
+    "data-collection artifact tied to publish month, not a content signal "
+    "— confirmed in NB03.\n"
+)
 
-NB01_INTERP_DATERANGE = """\
-**Result:** Videos were published 2024-06-24 to 2024-11-09. `creator_daily` and `engagement_daily` both extend one month further, to 2024-12-09.
-**Takeaway:** The extra month in `creator_daily` enables a clean as-of join for follower counts: every video has a creator snapshot available after its publication date, with no forward-leakage risk.
-"""
+NB01_INTERP_DATERANGE = (
+    "**Result:** Videos were published 2024-06-24 to 2024-11-09. `creator_daily` and "
+    "`engagement_daily` both extend one month further, to 2024-12-09.\n"
+    "**Takeaway:** The extra month in `creator_daily` enables a clean as-of join "
+    "for follower counts: every video has a creator snapshot available after its "
+    "publication date, with no forward-leakage risk.\n"
+)
 
-NB01_INTERP_CREATORS = """\
-**Result:** 1,872 unique creators; median 69 videos per creator, max 2,218.
-**Takeaway:** The distribution is highly skewed. A minimum-video filter is needed so each creator has enough data for a reliable train/test split — NB03 uses min = 30 videos.
-"""
+NB01_INTERP_CREATORS = (
+    "**Result:** 1,872 unique creators; median 69 videos per creator, max 2,218.\n"
+    "**Takeaway:** The distribution is highly skewed. A minimum-video filter is "
+    "needed so each creator has enough data for a reliable train/test split "
+    "— NB03 uses min = 30 videos.\n"
+)
 
-NB01_INTERP_THRESHOLD = """\
-**Result:** At min = 10 videos: 1,802 creators, 209,051 videos. At min = 30: 1,439 creators, 201,832 videos. At min = 50: 1,143 creators, 190,260 videos.
-**Takeaway:** Moving from min = 10 to min = 30 drops 363 creators (20 %) but only 7,219 videos (3.4 %). Min = 30 keeps 96.6 % of the data while ensuring each creator has enough history for a robust train split.
-"""
+NB01_INTERP_THRESHOLD = (
+    "**Result:** At min = 10 videos: 1,802 creators, 209,051 videos. "
+    "At min = 30: 1,439 creators, 201,832 videos. "
+    "At min = 50: 1,143 creators, 190,260 videos.\n"
+    "**Takeaway:** Moving from min = 10 to min = 30 drops 363 creators (20 %) "
+    "but only 7,219 videos (3.4 %). Min = 30 keeps 96.6 % of the data while "
+    "ensuring each creator has enough history for a robust train split.\n"
+)
 
-NB01_INTERP_JOIN = """\
-**Result:** All four cross-table join counts are 0 — no orphan records in any direction.
-**Takeaway:** The three tables are fully consistent: every video has engagement tracking and every creator has a daily profile. No imputation at the join level is needed.
-"""
+NB01_INTERP_JOIN = (
+    "**Result:** All four cross-table join counts are 0 — no orphan records "
+    "in any direction.\n"
+    "**Takeaway:** The three tables are fully consistent: every video has "
+    "engagement tracking and every creator has a daily profile. "
+    "No imputation at the join level is needed.\n"
+)
 
-NB01_INTERP_ENG_METRICS = """\
-**Result:** At day 14: median `play_count` 599, mean 26,313, max 37.8 M. Median likes 43, comments 3, shares 0.
-**Takeaway:** `play_count` is strongly right-skewed — mean is 44× the median. Log transformation is required before modelling. `play_count` is the most informative single engagement signal; the other metrics are even more concentrated at zero.
-"""
+NB01_INTERP_ENG_METRICS = (
+    "**Result:** At day 14: median `play_count` 599, mean 26,313, max 37.8 M. "
+    "Median likes 43, comments 3, shares 0.\n"
+    "**Takeaway:** `play_count` is strongly right-skewed — mean is 44× the median. "
+    "Log transformation is required before modelling. `play_count` is the most "
+    "informative single engagement signal; the other metrics are even more "
+    "concentrated at zero.\n"
+)
 
-NB01_INTERP_ENG_FIG = """\
-**Result:** Log-scale histograms of all six metrics show roughly bell-shaped distributions. `play_count` has the widest spread; `download_count` is the most concentrated near zero.
-**Takeaway:** `log1p` transformation works well for all metrics. Only `play_count` is used as the target; NB02 confirms day 14 is the right measurement point.
-"""
+NB01_INTERP_ENG_FIG = (
+    "**Result:** Log-scale histograms of all six metrics show roughly bell-shaped "
+    "distributions. `play_count` has the widest spread; `download_count` is the "
+    "most concentrated near zero.\n"
+    "**Takeaway:** `log1p` transformation works well for all metrics. "
+    "Only `play_count` is used as the target; NB02 confirms day 14 is the "
+    "right measurement point.\n"
+)
 
 # ================================================================== #
 # NOTEBOOK 02: Target Selection                                       #
@@ -350,7 +381,10 @@ FIGS.mkdir(parents=True, exist_ok=True)
 videos        = load_raw_table(RAW, "videos")
 creator_daily = load_raw_table(RAW, "creator_daily")
 engagement    = load_raw_table(RAW, "engagement_daily")
-print(f"videos {len(videos):,}  creator_daily {len(creator_daily):,}  engagement {len(engagement):,}")
+print(
+    f"videos {len(videos):,}  creator_daily {len(creator_daily):,}  "
+    f"engagement {len(engagement):,}"
+)
 """
 
 NB02_COV_MD = "## 1. Coverage by `days_since_post`"
@@ -370,14 +404,22 @@ display(pd.DataFrame(rows).set_index("day"))
 # tracking window per video
 max_day = engagement.groupby("video_id")["days_since_post"].max()
 n_days  = engagement.groupby("video_id")["days_since_post"].nunique()
-print(f"\\nDistinct days tracked per video: "
-      f"median={n_days.median():.0f}  p5={n_days.quantile(0.05):.0f}  p95={n_days.quantile(0.95):.0f}")
+print(
+    f"\\nDistinct days tracked per video: "
+    f"median={n_days.median():.0f}  "
+    f"p5={n_days.quantile(0.05):.0f}  "
+    f"p95={n_days.quantile(0.95):.0f}"
+)
 """
 
-NB02_COV_NOTE = """\
-**Result:** Day 14 is the only day with 100 % exact coverage (209,543 videos). Day 7 has 98.4 %; day 30 has only 35.3 %. The median video is tracked for 30 days.
-**Takeaway:** Day 14 is the only unambiguous measurement point — no imputation needed. Day 30 is unsuitable as a target because 65 % of videos do not yet have that observation in the dataset.
-"""
+NB02_COV_NOTE = (
+    "**Result:** Day 14 is the only day with 100 % exact coverage (209,543 videos). "
+    "Day 7 has 98.4 %; day 30 has only 35.3 %. The median video is tracked "
+    "for 30 days.\n"
+    "**Takeaway:** Day 14 is the only unambiguous measurement point — no imputation "
+    "needed. Day 30 is unsuitable as a target because 65 % of videos do not yet "
+    "have that observation in the dataset.\n"
+)
 
 NB02_COV_FIG = """\
 dsp = engagement["days_since_post"]
@@ -484,7 +526,10 @@ vids_f   = filter_creators(videos, "author_id", min_videos=min_vids)
 train_df, test_df = train_test_split_by_creator(vids_f, "author_id", test_size=0.2, seed=seed)
 train_ids = set(train_df["video_id"])
 test_ids  = set(test_df["video_id"])
-print(f"Filtered (≥{min_vids} videos): {len(vids_f):,} videos  {vids_f['author_id'].nunique():,} creators")
+print(
+    f"Filtered (≥{min_vids} videos): {len(vids_f):,} videos  "
+    f"{vids_f['author_id'].nunique():,} creators"
+)
 print(f"Train: {len(train_df):,}  |  Test: {len(test_df):,}")
 """
 
@@ -636,7 +681,10 @@ NB02_FOLLOWER_MD = "## 5. Follower count at publish time (as-of join)"
 NB02_FOLLOWER = """\
 videos_with_fc = follower_asof_join(videos, creator_daily)
 cov = videos_with_fc["follower_count_at_publish"].notna().mean()
-print(f"Coverage: {cov*100:.1f}%  ({videos_with_fc['follower_count_at_publish'].notna().sum():,} videos)")
+print(
+    f"Coverage: {cov*100:.1f}%  "
+    f"({videos_with_fc['follower_count_at_publish'].notna().sum():,} videos)"
+)
 
 joined = (abs_t
           .merge(videos_with_fc[["video_id", "follower_count_at_publish"]], on="video_id")
@@ -725,45 +773,80 @@ fig.savefig(FIGS / "fig6_per_creator_correlations.png", dpi=120)
 plt.show()
 """
 
-NB02_INTERP_MONO = """\
-**Result:** 1,240 videos (0.59 %) have at least one decrease in `play_count` over time. When present, the median drop is 96.2 % of peak — a near-total reset.
-**Takeaway:** These are data-collection resets, not real engagement drops. They are excluded from all targets to avoid noisy labels (confirmed in NB03: exactly 1,240 excluded, leaving 200,616 usable videos).
-"""
+NB02_INTERP_MONO = (
+    "**Result:** 1,240 videos (0.59 %) have at least one decrease in `play_count` "
+    "over time. When present, the median drop is 96.2 % of peak — a near-total "
+    "reset.\n"
+    "**Takeaway:** These are data-collection resets, not real engagement drops. "
+    "They are excluded from all targets to avoid noisy labels (confirmed in NB03: "
+    "exactly 1,240 excluded, leaving 200,616 usable videos).\n"
+)
 
-NB02_INTERP_ACCUM_FIG = """\
-**Result:** The accumulation curve shows rapid early growth: the median video reaches most of its day-29 play count within the first two weeks. The IQR narrows considerably after day 14.
-**Takeaway:** Most engagement is earned early. Day 14 captures the main growth phase before the curve flattens; the quantitative check in the next cell confirms it is a reliable proxy for the video's final ranking.
-"""
+NB02_INTERP_ACCUM_FIG = (
+    "**Result:** The accumulation curve shows rapid early growth: the median video "
+    "reaches most of its day-29 play count within the first two weeks. The IQR "
+    "narrows considerably after day 14.\n"
+    "**Takeaway:** Most engagement is earned early. Day 14 captures the main growth "
+    "phase before the curve flattens; the quantitative check in the next cell "
+    "confirms it is a reliable proxy for the video's final ranking.\n"
+)
 
-NB02_INTERP_ACCUM_TABLE = """\
-**Result:** By day 14, the median video has 95.7 % of its day-29 play count (80.2 % of videos already ≥ 90 %; Spearman ρ = 0.996 with day-29). Day 7 reaches 90.3 % median with ρ = 0.990.
-**Takeaway:** Day-14 play count is an accurate proxy for the video's final engagement level. ρ = 0.996 means the ranking of videos by popularity is essentially the same at day 14 and day 29 — models trained on day-14 labels will generalise to the final ranking.
-"""
+NB02_INTERP_ACCUM_TABLE = (
+    "**Result:** By day 14, the median video has 95.7 % of its day-29 play count "
+    "(80.2 % of videos already ≥ 90 %; Spearman ρ = 0.996 with day-29). "
+    "Day 7 reaches 90.3 % median with ρ = 0.990.\n"
+    "**Takeaway:** Day-14 play count is an accurate proxy for the video's final "
+    "engagement level. ρ = 0.996 means the ranking of videos by popularity is "
+    "essentially the same at day 14 and day 29 — models trained on day-14 labels "
+    "will generalise to the final ranking.\n"
+)
 
-NB02_INTERP_SPLIT = """\
-**Result:** After the 30-video creator filter: 201,832 videos, 1,439 creators. Split: 161,465 train / 40,367 test.
-**Takeaway:** The creator-stratified split ensures every creator appears in both train and test — required for computing creator baselines and evaluating generalisation within creators.
-"""
+NB02_INTERP_SPLIT = (
+    "**Result:** After the 30-video creator filter: 201,832 videos, 1,439 creators. "
+    "Split: 161,465 train / 40,367 test.\n"
+    "**Takeaway:** The creator-stratified split ensures every creator appears in "
+    "both train and test — required for computing creator baselines and evaluating "
+    "generalisation within creators.\n"
+)
 
-NB02_INTERP_R2 = """\
-**Result:** "Predict creator mean" explains 73.2 % of absolute log-view variance (test R² = 0.732) but only 4.4 % of relative target variance (R² = 0.044). RMSE is 0.984 in both cases.
-**Takeaway:** The absolute target is dominated by who the creator is, not what they posted. The relative target isolates content-driven variance. Any model that beats RMSE 0.984 on the relative target is genuinely learning from features beyond creator identity.
-"""
+NB02_INTERP_R2 = (
+    '**Result:** "Predict creator mean" explains 73.2 % of absolute log-view '
+    "variance (test R² = 0.732) but only 4.4 % of relative target variance "
+    "(R² = 0.044). RMSE is 0.984 in both cases.\n"
+    "**Takeaway:** The absolute target is dominated by who the creator is, not what "
+    "they posted. The relative target isolates content-driven variance. Any model "
+    "that beats RMSE 0.984 on the relative target is genuinely learning from "
+    "features beyond creator identity.\n"
+)
 
-NB02_INTERP_ENG_RATE = """\
-**Result:** Creator identity explains 49.3 % of engagement-rate variance (vs 73.2 % for absolute log-views).
-**Takeaway:** Engagement rate is less creator-dominated than raw views — audiences differ in their commenting and liking habits. For this project we predict relative views; engagement rate could be an alternative target in future work.
-"""
+NB02_INTERP_ENG_RATE = (
+    "**Result:** Creator identity explains 49.3 % of engagement-rate variance "
+    "(vs 73.2 % for absolute log-views).\n"
+    "**Takeaway:** Engagement rate is less creator-dominated than raw views — "
+    "audiences differ in their commenting and liking habits. For this project we "
+    "predict relative views; engagement rate could be an alternative target in "
+    "future work.\n"
+)
 
-NB02_INTERP_FOLLOWER = """\
-**Result:** As-of follower count covers 100 % of the 201,832 filtered videos. Spearman ρ = 0.645 with the absolute log-view target.
-**Takeaway:** Follower count at publication time is the single strongest pre-publication signal. It enters the model as a feature (not a target component); the as-of join guarantees only the snapshot before publication day is used, with no forward leakage.
-"""
+NB02_INTERP_FOLLOWER = (
+    "**Result:** As-of follower count covers 100 % of the 201,832 filtered videos. "
+    "Spearman ρ = 0.645 with the absolute log-view target.\n"
+    "**Takeaway:** Follower count at publication time is the single strongest "
+    "pre-publication signal. It enters the model as a feature (not a target "
+    "component); the as-of join guarantees only the snapshot before publication "
+    "day is used, with no forward leakage.\n"
+)
 
-NB02_INTERP_PC_CORR = """\
-**Result:** All 14 features show std_real/std_null > 1 (heterogeneity above chance). Highest: `duration` (1.58), `word_count` (1.57). For `duration`, 55 % of creators have a *negative* per-creator correlation despite a positive global ρ = 0.116.
-**Takeaway:** Feature effects vary meaningfully across creators — the same feature pushes engagement up for some and down for others. This motivates adding creator-relative features (`*_vs_creator`) in the feature engineering step.
-"""
+NB02_INTERP_PC_CORR = (
+    "**Result:** All 14 features show std_real/std_null > 1 (heterogeneity above "
+    "chance). Highest: `duration` (1.58), `word_count` (1.57). For `duration`, "
+    "55 % of creators have a *negative* per-creator correlation despite a positive "
+    "global ρ = 0.116.\n"
+    "**Takeaway:** Feature effects vary meaningfully across creators — the same "
+    "feature pushes engagement up for some and down for others. This motivates "
+    "adding creator-relative features (`*_vs_creator`) in the feature engineering "
+    "step.\n"
+)
 
 
 # ================================================================== #
@@ -789,70 +872,74 @@ def make_nb(cells: list) -> nbformat.NotebookNode:
     return nb
 
 
-nb01 = make_nb([
-    new_markdown_cell(NB01_GOAL),
-    new_code_cell(COLAB_GUARD),
-    new_code_cell(SETUP_COMMON),
-    new_code_cell(NB01_LOAD),
-    new_markdown_cell(NB01_INTERP_LOAD),
-    new_markdown_cell(NB01_SCHEMA_MD),
-    new_code_cell(NB01_SCHEMA),
-    new_markdown_cell(NB01_INTERP_SCHEMA),
-    new_markdown_cell(NB01_DATERANGE_MD),
-    new_code_cell(NB01_DATERANGE),
-    new_markdown_cell(NB01_INTERP_DATERANGE),
-    new_markdown_cell(NB01_CREATORS_MD),
-    new_code_cell(NB01_CREATORS),
-    new_markdown_cell(NB01_INTERP_CREATORS),
-    new_code_cell(NB01_THRESHOLD),
-    new_markdown_cell(NB01_INTERP_THRESHOLD),
-    new_markdown_cell(NB01_JOIN_MD),
-    new_code_cell(NB01_JOIN),
-    new_markdown_cell(NB01_INTERP_JOIN),
-    new_markdown_cell(NB01_ENG_MD),
-    new_code_cell(NB01_ENG_METRICS),
-    new_markdown_cell(NB01_INTERP_ENG_METRICS),
-    new_code_cell(NB01_ENG_FIG),
-    new_markdown_cell(NB01_INTERP_ENG_FIG),
-])
+nb01 = make_nb(
+    [
+        new_markdown_cell(NB01_GOAL),
+        new_code_cell(COLAB_GUARD),
+        new_code_cell(SETUP_COMMON),
+        new_code_cell(NB01_LOAD),
+        new_markdown_cell(NB01_INTERP_LOAD),
+        new_markdown_cell(NB01_SCHEMA_MD),
+        new_code_cell(NB01_SCHEMA),
+        new_markdown_cell(NB01_INTERP_SCHEMA),
+        new_markdown_cell(NB01_DATERANGE_MD),
+        new_code_cell(NB01_DATERANGE),
+        new_markdown_cell(NB01_INTERP_DATERANGE),
+        new_markdown_cell(NB01_CREATORS_MD),
+        new_code_cell(NB01_CREATORS),
+        new_markdown_cell(NB01_INTERP_CREATORS),
+        new_code_cell(NB01_THRESHOLD),
+        new_markdown_cell(NB01_INTERP_THRESHOLD),
+        new_markdown_cell(NB01_JOIN_MD),
+        new_code_cell(NB01_JOIN),
+        new_markdown_cell(NB01_INTERP_JOIN),
+        new_markdown_cell(NB01_ENG_MD),
+        new_code_cell(NB01_ENG_METRICS),
+        new_markdown_cell(NB01_INTERP_ENG_METRICS),
+        new_code_cell(NB01_ENG_FIG),
+        new_markdown_cell(NB01_INTERP_ENG_FIG),
+    ]
+)
 
-nb02 = make_nb([
-    new_markdown_cell(NB02_GOAL),
-    new_code_cell(COLAB_GUARD),
-    new_code_cell(SETUP_COMMON),
-    new_code_cell(NB02_LOAD),
-    new_markdown_cell(NB02_COV_MD),
-    new_code_cell(NB02_COV),
-    new_markdown_cell(NB02_COV_NOTE),
-    new_code_cell(NB02_COV_FIG),
-    new_markdown_cell(NB02_MONO_MD),
-    new_code_cell(NB02_MONO),
-    new_markdown_cell(NB02_INTERP_MONO),
-    new_markdown_cell(NB02_RATIO_MD),
-    new_code_cell(NB02_ACCUM_FIG),
-    new_markdown_cell(NB02_INTERP_ACCUM_FIG),
-    new_code_cell(NB02_ACCUM_TABLE),
-    new_markdown_cell(NB02_INTERP_ACCUM_TABLE),
-    new_markdown_cell(NB02_TARGET_MD),
-    new_code_cell(NB02_SPLIT),
-    new_markdown_cell(NB02_INTERP_SPLIT),
-    new_code_cell(NB02_BUILD_TARGET),
-    new_code_cell(NB02_TARGET_FIG),
-    new_code_cell(NB02_R2),
-    new_markdown_cell(NB02_INTERP_R2),
-    new_code_cell(NB02_R2_FIG),
-    new_code_cell(NB02_ENG_RATE),
-    new_markdown_cell(NB02_INTERP_ENG_RATE),
-    new_code_cell(NB02_TOP15_FIG),
-    new_markdown_cell(NB02_FOLLOWER_MD),
-    new_code_cell(NB02_FOLLOWER),
-    new_markdown_cell(NB02_INTERP_FOLLOWER),
-    new_code_cell(NB02_FOLLOWER_FIG),
-    new_markdown_cell(NB02_PC_CORR_MD),
-    new_code_cell(NB02_PC_CORR),
-    new_markdown_cell(NB02_INTERP_PC_CORR),
-    new_code_cell(NB02_PC_CORR_FIG),
-])
+nb02 = make_nb(
+    [
+        new_markdown_cell(NB02_GOAL),
+        new_code_cell(COLAB_GUARD),
+        new_code_cell(SETUP_COMMON),
+        new_code_cell(NB02_LOAD),
+        new_markdown_cell(NB02_COV_MD),
+        new_code_cell(NB02_COV),
+        new_markdown_cell(NB02_COV_NOTE),
+        new_code_cell(NB02_COV_FIG),
+        new_markdown_cell(NB02_MONO_MD),
+        new_code_cell(NB02_MONO),
+        new_markdown_cell(NB02_INTERP_MONO),
+        new_markdown_cell(NB02_RATIO_MD),
+        new_code_cell(NB02_ACCUM_FIG),
+        new_markdown_cell(NB02_INTERP_ACCUM_FIG),
+        new_code_cell(NB02_ACCUM_TABLE),
+        new_markdown_cell(NB02_INTERP_ACCUM_TABLE),
+        new_markdown_cell(NB02_TARGET_MD),
+        new_code_cell(NB02_SPLIT),
+        new_markdown_cell(NB02_INTERP_SPLIT),
+        new_code_cell(NB02_BUILD_TARGET),
+        new_code_cell(NB02_TARGET_FIG),
+        new_code_cell(NB02_R2),
+        new_markdown_cell(NB02_INTERP_R2),
+        new_code_cell(NB02_R2_FIG),
+        new_code_cell(NB02_ENG_RATE),
+        new_markdown_cell(NB02_INTERP_ENG_RATE),
+        new_code_cell(NB02_TOP15_FIG),
+        new_markdown_cell(NB02_FOLLOWER_MD),
+        new_code_cell(NB02_FOLLOWER),
+        new_markdown_cell(NB02_INTERP_FOLLOWER),
+        new_code_cell(NB02_FOLLOWER_FIG),
+        new_markdown_cell(NB02_PC_CORR_MD),
+        new_code_cell(NB02_PC_CORR),
+        new_markdown_cell(NB02_INTERP_PC_CORR),
+        new_code_cell(NB02_PC_CORR_FIG),
+    ]
+)
 
 nbformat.write(nb01, NB_DIR / "01-data-exploration.ipynb")
 nbformat.write(nb02, NB_DIR / "02-target-selection.ipynb")
@@ -922,7 +1009,10 @@ FIGS.mkdir(parents=True, exist_ok=True)
 videos        = load_raw_table(RAW, "videos")
 creator_daily = load_raw_table(RAW, "creator_daily")
 engagement    = load_raw_table(RAW, "engagement_daily")
-print(f"videos {len(videos):,}  creator_daily {len(creator_daily):,}  engagement {len(engagement):,}")
+print(
+    f"videos {len(videos):,}  creator_daily {len(creator_daily):,}  "
+    f"engagement {len(engagement):,}"
+)
 """
 
 NB03_STEP0_MD = "## Step 0 — Data quality checks and pre-filtering"
@@ -1203,7 +1293,10 @@ fig, ax = plt.subplots(figsize=(14, max(4, len(const_df) * 0.18)))
 colors = ["tomato" if v > 0.9 else ("orange" if v > 0.5 else "steelblue")
           for v in const_df["frac_creators_constant"]]
 ax.barh(const_df["feature"], const_df["frac_creators_constant"], color=colors, height=0.8)
-ax.axvline(0.9, color="red", linestyle="--", linewidth=0.8, label=">90% creators: near-constant feature")
+ax.axvline(
+    0.9, color="red", linestyle="--", linewidth=0.8,
+    label=">90% creators: near-constant feature"
+)
 ax.axvline(0.5, color="orange", linestyle="--", linewidth=0.8, label=">50%")
 ax.set_xlabel("Fraction of creators where feature is constant")
 ax.set_title("Per-creator feature constancy  (red = >90%: constant within most creators)")
@@ -1224,37 +1317,39 @@ display(summary)
 """
 
 
-nb03 = make_nb([
-    new_markdown_cell(NB03_GOAL),
-    new_code_cell(COLAB_GUARD),
-    new_code_cell(SETUP_COMMON),
-    new_code_cell(NB03_LOAD),
-    new_markdown_cell(NB03_STEP0_MD),
-    new_code_cell(NB03_STEP0),
-    new_markdown_cell(NB03_FOLLOWER_MD),
-    new_code_cell(NB03_FOLLOWER_DIAG),
-    new_code_cell(NB03_FOLLOWER_FIG),
-    new_markdown_cell(NB03_SPLIT_MD),
-    new_code_cell(NB03_SPLIT),
-    new_markdown_cell(NB03_BUILD_MD),
-    new_code_cell(NB03_BUILD),
-    new_code_cell(NB03_TARGET),
-    new_markdown_cell(NB03_PROFILE_MD),
-    new_code_cell(NB03_PROFILE),
-    new_code_cell(NB03_PROFILE_FIG),
-    new_code_cell(NB03_DIST_FIG),
-    new_markdown_cell(NB03_CORR_MD),
-    new_code_cell(NB03_CORR),
-    new_code_cell(NB03_CORR_FIG),
-    new_markdown_cell(NB03_SPEARMAN_MD),
-    new_code_cell(NB03_SPEARMAN),
-    new_code_cell(NB03_SPEARMAN_FIG),
-    new_markdown_cell(NB03_CREATOR_MD),
-    new_code_cell(NB03_CREATOR),
-    new_code_cell(NB03_CREATOR_FIG),
-    new_markdown_cell(NB03_SUMMARY_MD),
-    new_code_cell(NB03_SUMMARY),
-])
+nb03 = make_nb(
+    [
+        new_markdown_cell(NB03_GOAL),
+        new_code_cell(COLAB_GUARD),
+        new_code_cell(SETUP_COMMON),
+        new_code_cell(NB03_LOAD),
+        new_markdown_cell(NB03_STEP0_MD),
+        new_code_cell(NB03_STEP0),
+        new_markdown_cell(NB03_FOLLOWER_MD),
+        new_code_cell(NB03_FOLLOWER_DIAG),
+        new_code_cell(NB03_FOLLOWER_FIG),
+        new_markdown_cell(NB03_SPLIT_MD),
+        new_code_cell(NB03_SPLIT),
+        new_markdown_cell(NB03_BUILD_MD),
+        new_code_cell(NB03_BUILD),
+        new_code_cell(NB03_TARGET),
+        new_markdown_cell(NB03_PROFILE_MD),
+        new_code_cell(NB03_PROFILE),
+        new_code_cell(NB03_PROFILE_FIG),
+        new_code_cell(NB03_DIST_FIG),
+        new_markdown_cell(NB03_CORR_MD),
+        new_code_cell(NB03_CORR),
+        new_code_cell(NB03_CORR_FIG),
+        new_markdown_cell(NB03_SPEARMAN_MD),
+        new_code_cell(NB03_SPEARMAN),
+        new_code_cell(NB03_SPEARMAN_FIG),
+        new_markdown_cell(NB03_CREATOR_MD),
+        new_code_cell(NB03_CREATOR),
+        new_code_cell(NB03_CREATOR_FIG),
+        new_markdown_cell(NB03_SUMMARY_MD),
+        new_code_cell(NB03_SUMMARY),
+    ]
+)
 
 nbformat.write(nb03, NB_DIR / "03-feature-engineering.ipynb")
 print("Written notebooks/03-feature-engineering.ipynb")
@@ -1494,8 +1589,6 @@ plt.show()
 """
 
 
-
-
 NB04_SAVE_MD = """\
 ## 8. Save Artefacts
 """
@@ -1561,11 +1654,29 @@ NB04_SUMMARY_MD = """\
 
 NB04_SUMMARY = """\
 summary_rows = [
-    ("predict_0",            None,             m_zero["rmse"],    m_zero["mae"],    m_zero["r2"],    float("nan")),
-    ("predict_creator_mean", None,             m_cmean["rmse"],   m_cmean["mae"],   m_cmean["r2"],   float("nan")),
-    ("RandomForest",         rf_model.cv_rmse, m_rf["rmse"],      m_rf["mae"],      m_rf["r2"],      m_rf["spearman"]),
-    ("XGB_with_follower",    xgb_with.cv_rmse, m_xgb_with["rmse"],m_xgb_with["mae"],m_xgb_with["r2"],m_xgb_with["spearman"]),
-    ("XGB_no_follower",      xgb_nof.cv_rmse,  m_xgb_nof["rmse"], m_xgb_nof["mae"], m_xgb_nof["r2"], m_xgb_nof["spearman"]),
+    ("predict_0", None, m_zero["rmse"], m_zero["mae"], m_zero["r2"], float("nan")),
+    (
+        "predict_creator_mean",
+        None,
+        m_cmean["rmse"], m_cmean["mae"], m_cmean["r2"], float("nan"),
+    ),
+    (
+        "RandomForest",
+        rf_model.cv_rmse,
+        m_rf["rmse"], m_rf["mae"], m_rf["r2"], m_rf["spearman"],
+    ),
+    (
+        "XGB_with_follower",
+        xgb_with.cv_rmse,
+        m_xgb_with["rmse"], m_xgb_with["mae"],
+        m_xgb_with["r2"], m_xgb_with["spearman"],
+    ),
+    (
+        "XGB_no_follower",
+        xgb_nof.cv_rmse,
+        m_xgb_nof["rmse"], m_xgb_nof["mae"],
+        m_xgb_nof["r2"], m_xgb_nof["spearman"],
+    ),
 ]
 summary_df = pd.DataFrame(summary_rows,
     columns=["model", "cv_rmse", "test_rmse", "test_mae", "test_r2", "test_spearman"]
@@ -1586,30 +1697,32 @@ for k, v in best_xgb.params.items():
     print(f"  {k}: {v}")
 """
 
-nb04 = make_nb([
-    new_markdown_cell(NB04_GOAL),
-    new_code_cell(COLAB_GUARD),
-    new_code_cell(SETUP_COMMON),
-    new_markdown_cell("## 0. Load Data and Build Splits"),
-    new_code_cell(NB04_LOAD),
-    new_markdown_cell(NB04_TRIVIAL_MD),
-    new_code_cell(NB04_TRIVIAL),
-    new_markdown_cell(NB04_RF_MD),
-    new_code_cell(NB04_RF),
-    new_markdown_cell(NB04_XGB_MD),
-    new_code_cell(NB04_XGB),
-    new_markdown_cell(NB04_CV_MD),
-    new_code_cell(NB04_CV_TABLE),
-    new_markdown_cell(NB04_TEST_MD),
-    new_code_cell(NB04_TEST),
-    new_markdown_cell(NB04_FIGURES_MD),
-    new_code_cell(NB04_FIG_PRED_VS_ACTUAL),
-    new_code_cell(NB04_FIG_ERROR),
-    new_markdown_cell(NB04_SAVE_MD),
-    new_code_cell(NB04_SAVE),
-    new_markdown_cell(NB04_SUMMARY_MD),
-    new_code_cell(NB04_SUMMARY),
-])
+nb04 = make_nb(
+    [
+        new_markdown_cell(NB04_GOAL),
+        new_code_cell(COLAB_GUARD),
+        new_code_cell(SETUP_COMMON),
+        new_markdown_cell("## 0. Load Data and Build Splits"),
+        new_code_cell(NB04_LOAD),
+        new_markdown_cell(NB04_TRIVIAL_MD),
+        new_code_cell(NB04_TRIVIAL),
+        new_markdown_cell(NB04_RF_MD),
+        new_code_cell(NB04_RF),
+        new_markdown_cell(NB04_XGB_MD),
+        new_code_cell(NB04_XGB),
+        new_markdown_cell(NB04_CV_MD),
+        new_code_cell(NB04_CV_TABLE),
+        new_markdown_cell(NB04_TEST_MD),
+        new_code_cell(NB04_TEST),
+        new_markdown_cell(NB04_FIGURES_MD),
+        new_code_cell(NB04_FIG_PRED_VS_ACTUAL),
+        new_code_cell(NB04_FIG_ERROR),
+        new_markdown_cell(NB04_SAVE_MD),
+        new_code_cell(NB04_SAVE),
+        new_markdown_cell(NB04_SUMMARY_MD),
+        new_code_cell(NB04_SUMMARY),
+    ]
+)
 
 nbformat.write(nb04, NB_DIR / "04-baseline-models.ipynb")
 print("Written notebooks/04-baseline-model.ipynb")
@@ -1747,8 +1860,14 @@ m_cmean = {"name": "predict_creator_mean (test)",
            "r2":   float(r2_score(y_true_all, pred_creator_mean_test)),
            "spearman": float("nan")}
 
-print(f"predict_0            RMSE={m_zero['rmse']:.4f}  MAE={m_zero['mae']:.4f}  R²={m_zero['r2']:.4f}")
-print(f"predict_creator_mean RMSE={m_cmean['rmse']:.4f}  MAE={m_cmean['mae']:.4f}  R²={m_cmean['r2']:.4f}")
+print(
+    f"predict_0            RMSE={m_zero['rmse']:.4f}  "
+    f"MAE={m_zero['mae']:.4f}  R²={m_zero['r2']:.4f}"
+)
+print(
+    f"predict_creator_mean RMSE={m_cmean['rmse']:.4f}  "
+    f"MAE={m_cmean['mae']:.4f}  R²={m_cmean['r2']:.4f}"
+)
 print("(creator-mean baseline uses test mean — slightly optimistic)")
 """
 
@@ -1757,13 +1876,20 @@ NB06_OVERALL_MD = """\
 """
 
 NB06_OVERALL = """\
-m_global = compute_global_metrics(pred_g.rename(columns={"y_pred":"y_pred"}).assign(y_pred=pred_g.y_pred))
-m_pc     = compute_global_metrics(pred_pc.rename(columns={"y_pred":"y_pred"}).assign(y_pred=pred_pc.y_pred))
+m_global = compute_global_metrics(
+    pred_g.rename(columns={"y_pred": "y_pred"}).assign(y_pred=pred_g.y_pred)
+)
+m_pc = compute_global_metrics(
+    pred_pc.rename(columns={"y_pred": "y_pred"}).assign(y_pred=pred_pc.y_pred)
+)
 
 overall = pd.DataFrame([
-    {"model": "predict_0",                 **{k: m_zero[k] for k in ["rmse","mae","r2","spearman"]}},
-    {"model": "predict_creator_mean(test)",**{k: m_cmean[k] for k in ["rmse","mae","r2","spearman"]}},
-    {"model": "global XGB",               **{k: m_global[k] for k in ["rmse","mae","r2","spearman"]}},
+    {"model": "predict_0", **{k: m_zero[k] for k in ["rmse", "mae", "r2", "spearman"]}},
+    {
+        "model": "predict_creator_mean(test)",
+        **{k: m_cmean[k] for k in ["rmse", "mae", "r2", "spearman"]},
+    },
+    {"model": "global XGB", **{k: m_global[k] for k in ["rmse", "mae", "r2", "spearman"]}},
     {"model": "per-creator RF",           **{k: m_pc[k] for k in ["rmse","mae","r2","spearman"]}},
 ]).set_index("model")
 
@@ -1791,7 +1917,10 @@ pc_g  = compute_per_creator_metrics(pred_g)
 pc_pc = compute_per_creator_metrics(pred_pc)
 
 cmp = pc_g.merge(pc_pc, on="author_id", suffixes=("_g","_pc"))
-cmp = cmp.merge(meta_pc[["author_id","n_train","size_bin","worse_than_zero"]], on="author_id", how="left")
+cmp = cmp.merge(
+    meta_pc[["author_id", "n_train", "size_bin", "worse_than_zero"]],
+    on="author_id", how="left"
+)
 cmp["target_std"] = pred_g.groupby("author_id")["y_true"].std().reindex(cmp["author_id"]).values
 
 # positive  = per-creator wins
@@ -1803,8 +1932,14 @@ n_pc_wins_rmse     = (cmp["rmse_diff"] > 0).sum()
 n_pc_wins_spearman = (cmp["spearman_diff"] > 0).sum()
 
 print(f"Total creators in comparison: {n_total}")
-print(f"Per-creator wins on RMSE    : {n_pc_wins_rmse} / {n_total}  ({100*n_pc_wins_rmse/n_total:.1f}%)")
-print(f"Per-creator wins on Spearman: {n_pc_wins_spearman} / {n_total}  ({100*n_pc_wins_spearman/n_total:.1f}%)")
+print(
+    f"Per-creator wins on RMSE    : {n_pc_wins_rmse} / {n_total}  "
+    f"({100*n_pc_wins_rmse/n_total:.1f}%)"
+)
+print(
+    f"Per-creator wins on Spearman: {n_pc_wins_spearman} / {n_total}  "
+    f"({100*n_pc_wins_spearman/n_total:.1f}%)"
+)
 print(f"\\nMean RMSE diff (global - pc): {cmp.rmse_diff.mean():.4f}")
 print(f"Median RMSE diff            : {cmp.rmse_diff.median():.4f}")
 ci_lo, ci_hi = bootstrap_ci(cmp["rmse_diff"].values)
@@ -2032,7 +2167,10 @@ plt.show()
 
 pct_small = (se_df.n_test < 10).mean() * 100
 print(f"{pct_small:.0f}% of creators have < 10 test videos → their individual RMSE is unreliable.")
-print("Group-level statistics (bootstrap CIs above) are valid because they average over many creators.")
+print(
+    "Group-level statistics (bootstrap CIs above) are valid because "
+    "they average over many creators."
+)
 """
 
 NB06_SAVE_MD = """\
@@ -2151,33 +2289,35 @@ for i, c in enumerate(conclusions, 1):
     print(f"  {i}. {c}")
 """
 
-nb06 = make_nb([
-    new_markdown_cell(NB06_GOAL),
-    new_code_cell(COLAB_GUARD),
-    new_code_cell(SETUP_COMMON),
-    new_markdown_cell("## 0. Load Predictions"),
-    new_code_cell(NB06_LOAD),
-    new_code_cell(NB06_HELPERS),
-    new_code_cell(NB06_TRIVIAL),
-    new_markdown_cell(NB06_OVERALL_MD),
-    new_code_cell(NB06_OVERALL),
-    new_markdown_cell(NB06_PAIRED_MD),
-    new_code_cell(NB06_PAIRED),
-    new_markdown_cell(NB06_WILCOXON_MD),
-    new_code_cell(NB06_WILCOXON),
-    new_code_cell(NB06_DIST_FIG),
-    new_markdown_cell(NB06_MOD_MD),
-    new_code_cell(NB06_MOD_SIZE),
-    new_code_cell(NB06_MOD_SIZE_FIG),
-    new_markdown_cell(NB06_MOD_VAR_MD),
-    new_code_cell(NB06_MOD_VAR),
-    new_markdown_cell(NB06_NOISE_MD),
-    new_code_cell(NB06_NOISE),
-    new_markdown_cell(NB06_SAVE_MD),
-    new_code_cell(NB06_SAVE),
-    new_markdown_cell(NB06_SUMMARY_MD),
-    new_code_cell(NB06_SUMMARY),
-])
+nb06 = make_nb(
+    [
+        new_markdown_cell(NB06_GOAL),
+        new_code_cell(COLAB_GUARD),
+        new_code_cell(SETUP_COMMON),
+        new_markdown_cell("## 0. Load Predictions"),
+        new_code_cell(NB06_LOAD),
+        new_code_cell(NB06_HELPERS),
+        new_code_cell(NB06_TRIVIAL),
+        new_markdown_cell(NB06_OVERALL_MD),
+        new_code_cell(NB06_OVERALL),
+        new_markdown_cell(NB06_PAIRED_MD),
+        new_code_cell(NB06_PAIRED),
+        new_markdown_cell(NB06_WILCOXON_MD),
+        new_code_cell(NB06_WILCOXON),
+        new_code_cell(NB06_DIST_FIG),
+        new_markdown_cell(NB06_MOD_MD),
+        new_code_cell(NB06_MOD_SIZE),
+        new_code_cell(NB06_MOD_SIZE_FIG),
+        new_markdown_cell(NB06_MOD_VAR_MD),
+        new_code_cell(NB06_MOD_VAR),
+        new_markdown_cell(NB06_NOISE_MD),
+        new_code_cell(NB06_NOISE),
+        new_markdown_cell(NB06_SAVE_MD),
+        new_code_cell(NB06_SAVE),
+        new_markdown_cell(NB06_SUMMARY_MD),
+        new_code_cell(NB06_SUMMARY),
+    ]
+)
 
 nbformat.write(nb06, NB_DIR / "06-model-comparison.ipynb")
 print("Written notebooks/06-model-comparison.ipynb")
@@ -2303,7 +2443,10 @@ shap_labels     = [_short_label(fn) for fn in shap_feat_names]
 
 explainer_global = shap.TreeExplainer(global_model.model)
 shap_vals_global = explainer_global.shap_values(X_test_enc)
-print(f"SHAP matrix: {shap_vals_global.shape}  |  base value: {explainer_global.expected_value:.4f}")
+print(
+    f"SHAP matrix: {shap_vals_global.shape}  |  "
+    f"base value: {explainer_global.expected_value:.4f}"
+)
 
 mean_abs_shap = np.abs(shap_vals_global).mean(axis=0)
 global_importance = pd.DataFrame({
@@ -2601,7 +2744,11 @@ for bname, grp in stability_df.groupby("size_bin"):
 ax.axhline(0.5, color="gray", ls=":", lw=1, label="50% threshold")
 ax.set_xlabel("Creator training set size (n_train)", fontsize=11)
 ax.set_ylabel("Stability score\\n(fraction of bootstraps with same top-3)", fontsize=10)
-ax.set_title("Top-3 feature stability vs training set size\\n(15 bootstrap resamples, 30 trees each)", fontsize=12)
+ax.set_title(
+    "Top-3 feature stability vs training set size\\n"
+    "(15 bootstrap resamples, 30 trees each)",
+    fontsize=12,
+)
 ax.legend(fontsize=9, loc="lower right")
 ax.set_ylim(-0.05, 1.08)
 plt.tight_layout()
@@ -2806,29 +2953,31 @@ print("Per-creator importance: results/shap_per_creator_importance.parquet")
 """
 
 
-nb07 = make_nb([
-    new_markdown_cell(NB07_GOAL),
-    new_code_cell(COLAB_GUARD),
-    new_code_cell(SETUP_COMMON),
-    new_code_cell(NB07_LOAD),
-    new_markdown_cell(NB07_GLOBAL_SHAP_MD),
-    new_code_cell(NB07_GLOBAL_SHAP),
-    new_markdown_cell(NB07_GLOBAL_DEP_MD),
-    new_code_cell(NB07_GLOBAL_DEP),
-    new_markdown_cell(NB07_PC_SHAP_MD),
-    new_code_cell(NB07_PC_SHAP),
-    new_markdown_cell(NB07_RANK_MD),
-    new_code_cell(NB07_RANK),
-    new_markdown_cell(NB07_STABILITY_MD),
-    new_code_cell(NB07_STABILITY),
-    new_code_cell(NB07_STABILITY_FIG),
-    new_markdown_cell(NB07_CASES_MD),
-    new_code_cell(NB07_CASES),
-    new_markdown_cell(NB07_SAVE_MD),
-    new_code_cell(NB07_SAVE),
-    new_markdown_cell(NB07_SUMMARY_MD),
-    new_code_cell(NB07_SUMMARY),
-])
+nb07 = make_nb(
+    [
+        new_markdown_cell(NB07_GOAL),
+        new_code_cell(COLAB_GUARD),
+        new_code_cell(SETUP_COMMON),
+        new_code_cell(NB07_LOAD),
+        new_markdown_cell(NB07_GLOBAL_SHAP_MD),
+        new_code_cell(NB07_GLOBAL_SHAP),
+        new_markdown_cell(NB07_GLOBAL_DEP_MD),
+        new_code_cell(NB07_GLOBAL_DEP),
+        new_markdown_cell(NB07_PC_SHAP_MD),
+        new_code_cell(NB07_PC_SHAP),
+        new_markdown_cell(NB07_RANK_MD),
+        new_code_cell(NB07_RANK),
+        new_markdown_cell(NB07_STABILITY_MD),
+        new_code_cell(NB07_STABILITY),
+        new_code_cell(NB07_STABILITY_FIG),
+        new_markdown_cell(NB07_CASES_MD),
+        new_code_cell(NB07_CASES),
+        new_markdown_cell(NB07_SAVE_MD),
+        new_code_cell(NB07_SAVE),
+        new_markdown_cell(NB07_SUMMARY_MD),
+        new_code_cell(NB07_SUMMARY),
+    ]
+)
 
 nbformat.write(nb07, NB_DIR / "07-explainability.ipynb")
 print("Written notebooks/07-explainability.ipynb")

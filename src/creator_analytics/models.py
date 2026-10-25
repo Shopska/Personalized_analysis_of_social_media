@@ -12,7 +12,6 @@ Design constraints
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -22,9 +21,8 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_squared_error
-from sklearn.model_selection import KFold, RandomizedSearchCV, StratifiedKFold
+from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from xgboost import XGBRegressor
@@ -32,8 +30,13 @@ from xgboost import XGBRegressor
 logger = logging.getLogger(__name__)
 
 META_COLS: list[str] = [
-    "video_id", "author_id", "split", "create_dt",
-    "target_abs", "target_rel", "creator_baseline",
+    "video_id",
+    "author_id",
+    "split",
+    "create_dt",
+    "target_abs",
+    "target_rel",
+    "creator_baseline",
 ]
 VS_CREATOR_SUFFIX = "_vs_creator"
 
@@ -41,6 +44,7 @@ VS_CREATOR_SUFFIX = "_vs_creator"
 # ------------------------------------------------------------------ #
 # Data preparation                                                     #
 # ------------------------------------------------------------------ #
+
 
 def prepare_X(
     df: pd.DataFrame,
@@ -67,6 +71,7 @@ def prepare_X(
 # CV splits                                                            #
 # ------------------------------------------------------------------ #
 
+
 def make_cv_splits(
     author_ids: pd.Series,
     n_splits: int = 5,
@@ -82,10 +87,12 @@ def make_cv_splits(
 # Model containers                                                     #
 # ------------------------------------------------------------------ #
 
+
 @dataclass
 class TrainedModel:
     """A fitted model with optional preprocessing step and predict()."""
-    model: Any               # sklearn Pipeline or raw estimator
+
+    model: Any  # sklearn Pipeline or raw estimator
     cv_rmse: float
     params: dict
     feature_names: list[str] = field(default_factory=list)
@@ -112,6 +119,7 @@ class TrainedModel:
 # Trivial baselines (A)                                                #
 # ------------------------------------------------------------------ #
 
+
 def trivial_zero_rmse(y_test: pd.Series) -> float:
     """RMSE of always predicting 0 (= creator train median on relative target)."""
     return float(np.sqrt(mean_squared_error(y_test, np.zeros(len(y_test)))))
@@ -133,6 +141,7 @@ def trivial_creator_mean(
 # ------------------------------------------------------------------ #
 # B1: Global Random Forest                                             #
 # ------------------------------------------------------------------ #
+
 
 def search_random_forest(
     X_train: pd.DataFrame,
@@ -162,10 +171,12 @@ def search_random_forest(
     n_folds = n_folds_search if n_folds_search is not None else n_splits
     cv_splits_search = make_cv_splits(auth_search, n_splits=n_folds, seed=seed)
 
-    pipe = Pipeline([
-        ("imp", SimpleImputer(strategy="median")),
-        ("rf", RandomForestRegressor(n_jobs=-1, random_state=seed)),
-    ])
+    pipe = Pipeline(
+        [
+            ("imp", SimpleImputer(strategy="median")),
+            ("rf", RandomForestRegressor(n_jobs=-1, random_state=seed)),
+        ]
+    )
     param_dist = {
         "rf__n_estimators": [100, 200, 300],
         "rf__max_depth": [None, 8, 15, 25],
@@ -175,7 +186,8 @@ def search_random_forest(
     }
 
     search = RandomizedSearchCV(
-        pipe, param_dist,
+        pipe,
+        param_dist,
         n_iter=n_iter,
         cv=cv_splits_search,
         scoring="neg_root_mean_squared_error",
@@ -188,14 +200,19 @@ def search_random_forest(
     best_params = search.best_params_
     best_cv_rmse = float(-search.best_score_)
 
-    final_pipe = Pipeline([
-        ("imp", SimpleImputer(strategy="median")),
-        ("rf", RandomForestRegressor(
-            n_jobs=-1,
-            random_state=seed,
-            **{k.replace("rf__", ""): v for k, v in best_params.items()},
-        )),
-    ])
+    final_pipe = Pipeline(
+        [
+            ("imp", SimpleImputer(strategy="median")),
+            (
+                "rf",
+                RandomForestRegressor(
+                    n_jobs=-1,
+                    random_state=seed,
+                    **{k.replace("rf__", ""): v for k, v in best_params.items()},
+                ),
+            ),
+        ]
+    )
     final_pipe.fit(X_train, y_train)
 
     return TrainedModel(
@@ -210,6 +227,7 @@ def search_random_forest(
 # ------------------------------------------------------------------ #
 # B2: Global XGBoost                                                   #
 # ------------------------------------------------------------------ #
+
 
 def search_xgboost(
     X_train: pd.DataFrame,
@@ -258,7 +276,8 @@ def search_xgboost(
                 random_state=seed,
             )
             mdl.fit(
-                X_arr[tr_idx], y_arr[tr_idx],
+                X_arr[tr_idx],
+                y_arr[tr_idx],
                 eval_set=[(X_arr[val_idx], y_arr[val_idx])],
                 verbose=False,
             )
@@ -270,7 +289,10 @@ def search_xgboost(
         mean_rounds = int(np.mean(fold_rounds))
         logger.info(
             "XGB iter %d/%d  RMSE=%.4f  rounds=%d",
-            i + 1, n_iter, cv_rmse, mean_rounds,
+            i + 1,
+            n_iter,
+            cv_rmse,
+            mean_rounds,
         )
         if cv_rmse < best_cv_rmse:
             best_cv_rmse = cv_rmse
@@ -295,13 +317,10 @@ def search_xgboost(
     )
 
 
-
-
-
-
 # ------------------------------------------------------------------ #
 # C1: Global LightGBM                                                  #
 # ------------------------------------------------------------------ #
+
 
 def search_lightgbm(
     X_train: pd.DataFrame,
@@ -325,13 +344,13 @@ def search_lightgbm(
 
     for i in range(n_iter):
         params = {
-            "num_leaves":    int(rng.choice([31, 63, 127, 255])),
-            "max_depth":     int(rng.choice([-1, 4, 6, 8])),
+            "num_leaves": int(rng.choice([31, 63, 127, 255])),
+            "max_depth": int(rng.choice([-1, 4, 6, 8])),
             "learning_rate": float(rng.choice([0.05, 0.07, 0.1, 0.15])),
-            "subsample":     float(round(rng.uniform(0.6, 1.0), 2)),
+            "subsample": float(round(rng.uniform(0.6, 1.0), 2)),
             "colsample_bytree": float(round(rng.uniform(0.5, 1.0), 2)),
-            "reg_alpha":     float(rng.choice([0.0, 0.1, 0.5, 1.0])),
-            "reg_lambda":    float(round(rng.uniform(0.5, 2.0), 2)),
+            "reg_alpha": float(rng.choice([0.0, 0.1, 0.5, 1.0])),
+            "reg_lambda": float(round(rng.uniform(0.5, 2.0), 2)),
             "min_child_samples": int(rng.choice([5, 10, 20, 50])),
         }
         fold_rmses: list[float] = []
@@ -344,7 +363,8 @@ def search_lightgbm(
                 verbose=-1,
             )
             mdl.fit(
-                X_arr[tr_idx], y_arr[tr_idx],
+                X_arr[tr_idx],
+                y_arr[tr_idx],
                 eval_set=[(X_arr[val_idx], y_arr[val_idx])],
                 callbacks=[
                     __import__("lightgbm").early_stopping(50, verbose=False),
@@ -379,11 +399,10 @@ def search_lightgbm(
     )
 
 
-
-
 # ------------------------------------------------------------------ #
 # C2: Global Ridge                                                      #
 # ------------------------------------------------------------------ #
+
 
 def train_ridge(
     X_train: pd.DataFrame,
@@ -401,11 +420,13 @@ def train_ridge(
 
     cv_splits = make_cv_splits(author_ids_train, n_splits=n_splits, seed=seed)
 
-    pipe = Pipeline([
-        ("imp", SimpleImputer(strategy="median")),
-        ("scl", StandardScaler()),
-        ("ridge", RidgeCV(alphas=alphas, cv=cv_splits, scoring="neg_mean_squared_error")),
-    ])
+    pipe = Pipeline(
+        [
+            ("imp", SimpleImputer(strategy="median")),
+            ("scl", StandardScaler()),
+            ("ridge", RidgeCV(alphas=alphas, cv=cv_splits, scoring="neg_mean_squared_error")),
+        ]
+    )
     pipe.fit(X_train, y_train)
 
     ridge_cv = pipe.named_steps["ridge"]
@@ -419,4 +440,3 @@ def train_ridge(
         feature_names=list(X_train.columns),
         model_name="Ridge",
     )
-
