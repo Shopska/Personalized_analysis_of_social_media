@@ -1013,26 +1013,30 @@ def train_finetune_per_creator(
     model_type: str = "xgb",
     n_jobs: int = -1,
     seed: int = 42,
-    X_train_global: pd.DataFrame | None = None,
 ) -> dict[str, CreatorModel]:
     """Fine-tune a global XGB or LGBM model on each creator's data.
 
-    XGB: pass xgb_model=global_model.model to continue training from global init.
-         Requires same feature set — pass X_train_global if global model uses more features.
-    LGBM: pass init_model=global_model.model to continue training.
-    X_train = per-creator features; X_train_global = full global features (for XGB/LGBM init).
+    X_train MUST have exactly the same columns (and order) as global_model.feature_names —
+    pass X_train_global (106 global features), NOT X_train_pc.  Warm-start via
+    xgb_model / init_model requires the exact feature set the global booster was trained on;
+    no *_vs_creator dropping or constant-feature pruning is applied here.
+
+    Raises ValueError on column mismatch so the error surfaces before parallel dispatch.
     """
-    authors = list(author_ids.unique())
-    global_estimator = global_model.model  # raw XGBRegressor or LGBMRegressor
     global_feature_names = global_model.feature_names
-    # Use global features for fine-tuning if provided (XGB requires same feature count)
-    X_src = X_train_global if X_train_global is not None else X_train
+    if list(X_train.columns) != global_feature_names:
+        raise ValueError(
+            f"train_finetune_per_creator: X_train has {len(X_train.columns)} columns "
+            f"but global_model.feature_names has {len(global_feature_names)}. "
+            "Pass X_train_global (the full global feature matrix), not X_train_pc."
+        )
+    authors = list(author_ids.unique())
+    global_estimator = global_model.model
 
     def _do_xgb(a):
         mask = author_ids == a
-        Xc = X_src[mask][global_feature_names].reset_index(drop=True)
+        Xc = X_train[mask].reset_index(drop=True)
         yc = y_train[mask].reset_index(drop=True)
-        # No drop_constant_features: xgb_model warm-start requires exact same feature count
         if len(Xc) < 5:
             return None
         fine_tuned = XGBRegressor(
@@ -1057,9 +1061,8 @@ def train_finetune_per_creator(
     def _do_lgbm(a):
         from lightgbm import LGBMRegressor
         mask = author_ids == a
-        Xc = X_src[mask][global_feature_names].reset_index(drop=True)
+        Xc = X_train[mask].reset_index(drop=True)
         yc = y_train[mask].reset_index(drop=True)
-        # No drop_constant_features: init_model warm-start requires exact same feature count
         if len(Xc) < 5:
             return None
         fine_tuned = LGBMRegressor(

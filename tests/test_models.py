@@ -22,6 +22,7 @@ from creator_analytics.models import (
     prepare_X,
     search_random_forest,
     search_xgboost,
+    train_finetune_per_creator,
     trivial_creator_mean,
     trivial_zero_rmse,
 )
@@ -277,3 +278,26 @@ def test_trained_model_save_load(tmp_path):
     model.save(path)
     loaded = TrainedModel.load(path)
     np.testing.assert_allclose(model.predict(X), loaded.predict(X))
+
+
+# ------------------------------------------------------------------ #
+# C4 finetune: column validation                                       #
+# ------------------------------------------------------------------ #
+
+def test_finetune_per_creator_wrong_features_raises():
+    """train_finetune_per_creator raises ValueError when X columns != global feature_names."""
+    X, y, author_ids = _make_tiny_train(n=60, n_creators=6)
+    global_model = search_xgboost(X, y, author_ids, n_splits=2, seed=0, n_iter=2)
+    # Subset of features — mismatches global_model.feature_names
+    X_wrong = X[["duration_log", "desc_len"]]
+    with pytest.raises(ValueError, match="feature_names"):
+        train_finetune_per_creator(X_wrong, y, author_ids, global_model=global_model)
+
+
+def test_finetune_per_creator_wrong_column_count_message():
+    """Error message includes actual vs expected column counts."""
+    X, y, author_ids = _make_tiny_train(n=60, n_creators=6)
+    global_model = search_xgboost(X, y, author_ids, n_splits=2, seed=0, n_iter=2)
+    X_wrong = X[["duration_log"]]
+    with pytest.raises(ValueError, match="1"):
+        train_finetune_per_creator(X_wrong, y, author_ids, global_model=global_model)
