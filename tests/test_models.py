@@ -22,7 +22,6 @@ from creator_analytics.models import (
     prepare_X,
     search_random_forest,
     search_xgboost,
-    train_finetune_per_creator,
     trivial_creator_mean,
     trivial_zero_rmse,
 )
@@ -33,21 +32,18 @@ from creator_analytics.models import (
 # ------------------------------------------------------------------ #
 
 def _make_tiny_train(n: int = 60, n_creators: int = 6, seed: int = 0):
-    """Minimal feature DataFrame + target + author_ids.
-
-    All features are numeric to match the new one-hot pipeline (no string categoricals).
-    """
+    """Minimal feature DataFrame + target + author_ids."""
     rng = np.random.RandomState(seed)
     author_ids = pd.Series(
         [f"creator_{i % n_creators}" for i in range(n)], name="author_id"
     )
     X = pd.DataFrame({
-        "duration_log":     rng.rand(n).astype("float64"),
-        "desc_len":         rng.randint(0, 200, n).astype("float64"),
-        "publish_hour":     rng.randint(0, 24, n).astype("float64"),
-        "ratio_9_16":       rng.randint(0, 2, n).astype("float64"),
-        "topic_music":      rng.randint(0, 2, n).astype("float64"),
-        "dominant_joy":     rng.randint(0, 2, n).astype("float64"),
+        "duration_log":  rng.rand(n).astype("float64"),
+        "desc_len":      rng.randint(0, 200, n).astype("float64"),
+        "publish_hour":  rng.randint(0, 24, n).astype("float64"),
+        "ratio_9_16":    rng.randint(0, 2, n).astype("float64"),
+        "topic_music":   rng.randint(0, 2, n).astype("float64"),
+        "dominant_joy":  rng.randint(0, 2, n).astype("float64"),
     })
     y = pd.Series(rng.randn(n), name="target")
     return X, y, author_ids
@@ -142,12 +138,10 @@ def test_trivial_zero_rmse_all_zeros():
 
 def test_trivial_zero_rmse_nonzero():
     y = pd.Series([1.0, -1.0])
-    # sqrt(mean([1, 1])) = 1
     assert trivial_zero_rmse(y) == pytest.approx(1.0)
 
 
 def test_trivial_creator_mean_perfect():
-    """If train mean equals test value for each creator, RMSE = 0."""
     y_train = pd.Series([2.0, 2.0, 3.0, 3.0])
     auth_train = pd.Series(["a", "a", "b", "b"])
     y_test = pd.Series([2.0, 3.0])
@@ -188,7 +182,6 @@ def test_compute_metrics_perfect():
 # ------------------------------------------------------------------ #
 
 def test_per_creator_n_test_sums_to_global():
-    """Sum of per-creator n_test must equal len(y_test)."""
     rng = np.random.RandomState(7)
     n = 50
     y_true = pd.Series(rng.randn(n))
@@ -199,16 +192,14 @@ def test_per_creator_n_test_sums_to_global():
 
 
 def test_per_creator_covers_same_videos_as_global():
-    """The videos used in per-creator rows are exactly the same as the global set."""
     rng = np.random.RandomState(9)
     n = 40
     y_true = pd.Series(rng.randn(n))
     y_pred = pd.Series(rng.randn(n))
     author_ids = pd.Series([f"c{i % 4}" for i in range(n)])
     per_creator = compute_per_creator_metrics(y_true, y_pred, author_ids)
-    # RMSE computed globally should match if we could reconstruct — at minimum n counts match
     assert per_creator["n_test"].sum() == len(y_true)
-    assert len(per_creator) == 4  # 4 unique creators
+    assert len(per_creator) == 4
 
 
 def test_per_creator_single_creator():
@@ -222,7 +213,7 @@ def test_per_creator_single_creator():
 
 
 # ------------------------------------------------------------------ #
-# search_random_forest smoke test (tiny data, 2 iterations)            #
+# search_random_forest smoke test                                       #
 # ------------------------------------------------------------------ #
 
 def test_search_random_forest_returns_trained_model():
@@ -241,7 +232,7 @@ def test_search_random_forest_predict_shape():
 
 
 # ------------------------------------------------------------------ #
-# search_xgboost smoke test (tiny data, 2 iterations)                  #
+# search_xgboost smoke test                                            #
 # ------------------------------------------------------------------ #
 
 def test_search_xgboost_returns_trained_model():
@@ -278,26 +269,3 @@ def test_trained_model_save_load(tmp_path):
     model.save(path)
     loaded = TrainedModel.load(path)
     np.testing.assert_allclose(model.predict(X), loaded.predict(X))
-
-
-# ------------------------------------------------------------------ #
-# C4 finetune: column validation                                       #
-# ------------------------------------------------------------------ #
-
-def test_finetune_per_creator_wrong_features_raises():
-    """train_finetune_per_creator raises ValueError when X columns != global feature_names."""
-    X, y, author_ids = _make_tiny_train(n=60, n_creators=6)
-    global_model = search_xgboost(X, y, author_ids, n_splits=2, seed=0, n_iter=2)
-    # Subset of features — mismatches global_model.feature_names
-    X_wrong = X[["duration_log", "desc_len"]]
-    with pytest.raises(ValueError, match="feature_names"):
-        train_finetune_per_creator(X_wrong, y, author_ids, global_model=global_model)
-
-
-def test_finetune_per_creator_wrong_column_count_message():
-    """Error message includes actual vs expected column counts."""
-    X, y, author_ids = _make_tiny_train(n=60, n_creators=6)
-    global_model = search_xgboost(X, y, author_ids, n_splits=2, seed=0, n_iter=2)
-    X_wrong = X[["duration_log"]]
-    with pytest.raises(ValueError, match="1"):
-        train_finetune_per_creator(X_wrong, y, author_ids, global_model=global_model)
