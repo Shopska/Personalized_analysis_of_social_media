@@ -121,10 +121,11 @@ def paired_comparison(
         stat, pval = float("nan"), float("nan")
 
     rng = np.random.RandomState(seed)
-    n = len(diff)
+    n = len(err_a)
     boot_diffs = np.array([
-        np.sqrt(diff[rng.choice(n, n, replace=True)].mean())
+        np.sqrt(err_a[idx].mean()) - np.sqrt(err_b[idx].mean())
         for _ in range(n_bootstrap)
+        for idx in [rng.choice(n, n, replace=True)]
     ])
     ci_low  = float(np.percentile(boot_diffs, 2.5))
     ci_high = float(np.percentile(boot_diffs, 97.5))
