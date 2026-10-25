@@ -146,8 +146,18 @@ class ShrinkageBlend:
     cv_rmse: float
     model_name: str = "ShrinkageBlend"
 
-    def predict(self, X: pd.DataFrame, author_ids: pd.Series) -> np.ndarray:
-        g_pred = self.global_model.predict(X)
+    def predict(
+        self,
+        X: pd.DataFrame,
+        author_ids: pd.Series,
+        X_global: pd.DataFrame | None = None,
+    ) -> np.ndarray:
+        """X = per-creator features; X_global = full global features for global model.
+
+        If X_global is None, X is used for both (only works if X contains all global features).
+        """
+        Xg = X_global if X_global is not None else X
+        g_pred = self.global_model.predict(Xg)
         blended = g_pred.copy()
         for author, idx_vals in author_ids.groupby(author_ids).groups.items():
             if author not in self.per_creator_models:
@@ -169,8 +179,18 @@ class TwoStageModel:
     stage2: dict[str, CreatorModel]  # per-creator residual models
     model_name: str = "TwoStage"
 
-    def predict(self, X: pd.DataFrame, author_ids: pd.Series) -> np.ndarray:
-        pred = self.stage1.predict(X).copy()
+    def predict(
+        self,
+        X: pd.DataFrame,
+        author_ids: pd.Series,
+        X_global: pd.DataFrame | None = None,
+    ) -> np.ndarray:
+        """X = per-creator features; X_global = full global features for stage1.
+
+        If X_global is None, X is used for stage1 (only works if X has all global features).
+        """
+        Xg = X_global if X_global is not None else X
+        pred = self.stage1.predict(Xg).copy()
         for author, idx_vals in author_ids.groupby(author_ids).groups.items():
             if author not in self.stage2:
                 continue
@@ -867,16 +887,19 @@ def find_shrinkage_k(
     y_val: pd.Series,
     author_ids_val: pd.Series,
     k_grid: list[float] | None = None,
+    X_val_global: pd.DataFrame | None = None,
 ) -> float:
     """Find k that minimises blended RMSE on a validation set.
 
+    X_val = per-creator features; X_val_global = global features for global model.
     w_i = n_train_i / (n_train_i + k); higher k → more shrinkage toward global.
     """
     if k_grid is None:
         k_grid = [1, 5, 10, 20, 50, 100, 200, 500, 1000, 5000]
 
     n_train_pc = {a: m.n_train for a, m in per_creator_models.items()}
-    g_pred = global_model.predict(X_val)
+    Xvg = X_val_global if X_val_global is not None else X_val
+    g_pred = global_model.predict(Xvg)
 
     best_k, best_rmse = k_grid[0], np.inf
     for k in k_grid:
@@ -909,9 +932,14 @@ def train_shrinkage_blend(
     y_train: pd.Series,
     author_ids_train: pd.Series,
     cv_splits: list[tuple[np.ndarray, np.ndarray]],
+    X_train_global: pd.DataFrame | None = None,
 ) -> ShrinkageBlend:
-    """Find k by CV on train, return a ShrinkageBlend using all train per-creator models."""
-    k_rmses: dict[float, list[float]] = {}
+    """Find k by CV on train, return a ShrinkageBlend using all train per-creator models.
+
+    X_train = per-creator features; X_train_global = full global features for global model.
+    """
+    from collections import Counter
+    k_per_fold: list[float] = []
 
     for tr_idx, val_idx in cv_splits:
         X_tr  = X_train.iloc[tr_idx].reset_index(drop=True)
@@ -920,9 +948,9 @@ def train_shrinkage_blend(
         X_val  = X_train.iloc[val_idx]
         y_val  = y_train.iloc[val_idx]
         auth_val = author_ids_train.iloc[val_idx]
+        X_val_global = X_train_global.iloc[val_idx] if X_train_global is not None else None
 
-        # Build fold-level per-creator models (RF-based for speed)
-        # We skip config search here and use the first grid entry as a fast proxy
+        # Build fold-level per-creator models (fast proxy — first grid config)
         fold_pc: dict[str, CreatorModel] = {}
         for a in auth_tr.unique():
             mask = auth_tr == a
@@ -939,18 +967,18 @@ def train_shrinkage_blend(
                 n_train=len(Xc), n_features=len(Xc.columns), worse_than_zero=False,
             )
 
-        k_val = find_shrinkage_k(fold_pc, global_model, X_val, y_val, auth_val)
-        k_rmses.setdefault(k_val, []).append(
-            float(np.sqrt(mean_squared_error(
-                y_val.values,
-                global_model.predict(X_val),
-            )))
+        k_val = find_shrinkage_k(
+            fold_pc, global_model, X_val, y_val, auth_val,
+            X_val_global=X_val_global,
         )
+        k_per_fold.append(k_val)
 
-    best_k = float(min(k_rmses, key=lambda k: np.mean(k_rmses[k])))
+    # Majority vote: use the k chosen most often across folds
+    best_k = float(Counter(k_per_fold).most_common(1)[0][0])
 
     n_train_pc = {a: m.n_train for a, m in per_creator_models.items()}
-    g_pred = global_model.predict(X_train)
+    Xg = X_train_global if X_train_global is not None else X_train
+    g_pred = global_model.predict(Xg)
     blended = g_pred.copy()
     for author, idx_vals in author_ids_train.groupby(author_ids_train).groups.items():
         if author not in per_creator_models:
@@ -1067,14 +1095,16 @@ def train_two_stage(
     global_model: TrainedModel,
     seed: int = 42,
     n_jobs: int = -1,
+    X_train_global: pd.DataFrame | None = None,
 ) -> TwoStageModel:
     """Stage 1 = global model predictions; stage 2 = per-creator on residuals.
 
-    X_train must already have *_vs_creator features dropped.
-    Conservative XGB config (strong regularisation) for the residual models.
+    X_train = per-creator features (no *_vs_creator).
+    X_train_global = full global features for stage-1 predictions; if None, uses X_train.
     """
+    Xg = X_train_global if X_train_global is not None else X_train
     residuals = pd.Series(
-        y_train.values - global_model.predict(X_train),
+        y_train.values - global_model.predict(Xg),
         index=y_train.index,
         name="residual",
     )
