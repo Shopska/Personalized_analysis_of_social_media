@@ -1013,22 +1013,26 @@ def train_finetune_per_creator(
     model_type: str = "xgb",
     n_jobs: int = -1,
     seed: int = 42,
+    X_train_global: pd.DataFrame | None = None,
 ) -> dict[str, CreatorModel]:
     """Fine-tune a global XGB or LGBM model on each creator's data.
 
-    XGB: pass xgb_model=global_model.model to continue training.
+    XGB: pass xgb_model=global_model.model to continue training from global init.
+         Requires same feature set — pass X_train_global if global model uses more features.
     LGBM: pass init_model=global_model.model to continue training.
-    X_train must already have *_vs_creator features dropped.
+    X_train = per-creator features; X_train_global = full global features (for XGB/LGBM init).
     """
     authors = list(author_ids.unique())
     global_estimator = global_model.model  # raw XGBRegressor or LGBMRegressor
     global_feature_names = global_model.feature_names
+    # Use global features for fine-tuning if provided (XGB requires same feature count)
+    X_src = X_train_global if X_train_global is not None else X_train
 
     def _do_xgb(a):
         mask = author_ids == a
-        Xc = X_train[mask][global_feature_names].reset_index(drop=True)
+        Xc = X_src[mask][global_feature_names].reset_index(drop=True)
         yc = y_train[mask].reset_index(drop=True)
-        Xc, dropped = drop_constant_features(Xc, threshold=1.0)
+        # No drop_constant_features: xgb_model warm-start requires exact same feature count
         if len(Xc) < 5:
             return None
         fine_tuned = XGBRegressor(
@@ -1053,9 +1057,9 @@ def train_finetune_per_creator(
     def _do_lgbm(a):
         from lightgbm import LGBMRegressor
         mask = author_ids == a
-        Xc = X_train[mask][global_feature_names].reset_index(drop=True)
+        Xc = X_src[mask][global_feature_names].reset_index(drop=True)
         yc = y_train[mask].reset_index(drop=True)
-        Xc, _ = drop_constant_features(Xc, threshold=1.0)
+        # No drop_constant_features: init_model warm-start requires exact same feature count
         if len(Xc) < 5:
             return None
         fine_tuned = LGBMRegressor(

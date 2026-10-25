@@ -246,6 +246,9 @@ def log_experiment(
     if not path.exists() or "| Date |" not in path.read_text(encoding="utf-8"):
         path.write_text(table_header + line, encoding="utf-8")
     else:
+        existing = path.read_text(encoding="utf-8")
+        if f"| {name} |" in existing:
+            return  # idempotent: skip if name already logged
         with open(path, "a", encoding="utf-8") as f:
             f.write(line)
 
