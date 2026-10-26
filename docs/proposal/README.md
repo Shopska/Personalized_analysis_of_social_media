@@ -1,4 +1,5 @@
 # docs/proposal/
 
-Put your compiled proposal PDF here (`proposal.pdf`) — the `.tex` source only if you
-want it version-controlled too, a PDF alone is enough.
+[`proposal_Kaplysh_Shopska.pdf`](proposal_Kaplysh_Shopska.pdf): the project proposal submitted at the start of the semester (in Ukrainian).
+
+The current plan, which refines the proposal, is in [`docs/plan.md`](../plan.md).

@@ -80,16 +80,16 @@ Full experiment log: [`results/experiments.md`](results/experiments.md) · metri
 | 01 | [Data exploration](notebooks/01-data-exploration.ipynb) | Audit of the three tables, nulls, distributions | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Shopska/Personalized_analysis_of_social_media/blob/main/notebooks/01-data-exploration.ipynb) |
 | 02 | [Target selection](notebooks/02-target-selection.ipynb) | Day 14 and relative target | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Shopska/Personalized_analysis_of_social_media/blob/main/notebooks/02-target-selection.ipynb) |
 | 03 | [Feature engineering](notebooks/03-feature-engineering.ipynb) | 106 features in 14 groups, leakage checks | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Shopska/Personalized_analysis_of_social_media/blob/main/notebooks/03-feature-engineering.ipynb) |
-| 04 | [Baseline models](notebooks/04-baseline-models.ipynb) | Trivial baselines, global RF and XGBoost, first SHAP plot | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Shopska/Personalized_analysis_of_social_media/blob/main/notebooks/04-baseline-models.ipynb) |
-| 05 | [Alternative models](notebooks/05-alternative-models.ipynb) | Global LightGBM and Ridge | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Shopska/Personalized_analysis_of_social_media/blob/main/notebooks/05-alternative-models.ipynb) |
-| 06 | [Model comparison](notebooks/06-model-comparison.ipynb) | Leaderboard and significance tests | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Shopska/Personalized_analysis_of_social_media/blob/main/notebooks/06-model-comparison.ipynb) |
-| 07 | [Feature ablation](notebooks/07-feature-ablation.ipynb) | Which feature groups matter | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Shopska/Personalized_analysis_of_social_media/blob/main/notebooks/07-feature-ablation.ipynb) |
+| 04 | [Baseline models](notebooks/04-baseline-models.ipynb) | Trivial baselines, global RF and XGBoost, first SHAP plot | |
+| 05 | [Alternative models](notebooks/05-alternative-models.ipynb) | Global LightGBM and Ridge | |
+| 06 | [Model comparison](notebooks/06-model-comparison.ipynb) | Leaderboard and significance tests | |
+| 07 | [Feature ablation](notebooks/07-feature-ablation.ipynb) | Which feature groups matter | |
 
 All notebooks are committed with outputs, so results are visible without running them.
 
 ## How to run
 
-**Google Colab (recommended).** Click a Colab badge above. The first cell of each notebook clones the repo and installs the package automatically. Run notebooks in order: 03 builds the feature table that 04–07 use. Training in 04 takes ~30 min.
+**Google Colab (recommended).** Click a Colab badge above. In notebooks 01–03 the first cell clones the repo and installs the package automatically. Run notebooks in order: 03 builds the feature table that 04–07 use. Training in 04 takes ~30 min.
 
 **Locally** (Python ≥ 3.11):
 
@@ -111,8 +111,14 @@ make test         # run tests
 ├── config/default.yaml      # paths, split, CV and feature settings
 ├── results/                 # metrics, leaderboard, figures
 ├── app/                     # Streamlit demo (work in progress)
-└── docs/                    # proposal, slides
+└── docs/                    # proposal, slides, plan, related work
 ```
+
+## Plan, related work and slides
+
+- [Plan to the final defense](docs/plan.md): next stages, priorities, risks
+- [Related work](docs/related-work.md): research, existing tools, and where our project fits
+- [Midterm slides](docs/slides/midterm.pdf)
 
 ## Team
 

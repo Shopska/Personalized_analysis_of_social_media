@@ -1,5 +1,7 @@
 # app/
 
+Streamlit demo: SHAP profile of a creator, recommendations and per-video explanations.
+
 ## What Streamlit is
 
 [Streamlit](https://streamlit.io/) turns a plain Python script into an interactive web
@@ -20,13 +22,9 @@ streamlit run app/streamlit_app.py
 
 Opens at `http://localhost:8501`. Stop it with `Ctrl+C`.
 
-**Prerequisites** — the app reads pre-computed artefacts from `results/` and
-`models/`. If you haven't run the full pipeline yet:
+**Prerequisites**: the app reads `models/global_xgb.joblib`, `data/processed/dataset_index.parquet` and files from `results/`. Run `make reproduce` and notebook 03 first.
 
-```bash
-make reproduce   # data → features → global XGBoost → evaluation
-# then run notebooks/06-model-comparison.ipynb to produce results/shap_global_test.parquet
-```
+> **Status: work in progress.** `results/shap_global_test.parquet` comes from an earlier version of the pipeline and does not match the current 106 features. The demo will be updated after the midterm (see [`docs/plan.md`](../docs/plan.md)).
 
 The app degrades gracefully when optional artefacts are missing:
 - `results/shap_global_test.parquet` missing → SHAP tabs show an info message

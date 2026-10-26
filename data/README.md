@@ -1,7 +1,7 @@
 # data/ — data card
 
-> EDA completed 2026-10-17. All numbers from `python scripts/eda.py` after
-> downloading via `python scripts/download_data.py`.
+> Numbers come from `notebooks/01-data-exploration.ipynb` after downloading the data
+> with `python scripts/download_data.py`.
 
 ## Name and source
 
@@ -145,8 +145,8 @@ The three tables form a clean star schema: no orphan rows.
 ## `data/raw/` vs. `data/interim/` vs. `data/processed/`
 
 - `data/raw/*.parquet` — the tables exactly as downloaded from Hugging Face.
-- `data/interim/` — after cleaning and filtering out creators with too few videos
-  (`min_videos_per_creator` in `config/default.yaml`).
+- `data/interim/` — reserved for intermediate files (currently unused; cleaning and
+  filtering happen in memory in `creator_analytics.data`).
 - `data/processed/` — model-ready features produced by `src/creator_analytics/features.py`.
 
 None of these files are committed to git; only this README and `data/raw/CHECKSUMS.txt` are.
@@ -180,7 +180,7 @@ Creators and videos remaining at each min_videos_per_creator threshold:
 | ≥ 30 | 1,439 | 201,832 |
 | ≥ 50 | 1,143 | 190,260 |
 
-**Note**: the actual threshold to use is a project decision, not fixed here.
+**Chosen threshold: ≥ 30 videos** (`min_videos_per_creator` in `config/default.yaml`). After also removing 1,240 videos with a decreasing `play_count` (a data-collection artefact, see notebook 02), the modelling set has **200,616 videos from 1,437 creators**.
 
 ## Coverage of days_since_post in engagement_daily
 
@@ -196,14 +196,13 @@ relative to the data collection window ending on 2024-12-09).
 
 ## Splits
 
-- Creators with fewer than `min_videos_per_creator` videos are removed first
-  (threshold to be chosen by the team; see distribution table above).
+- Creators with fewer than 30 videos (`min_videos_per_creator`) are removed first.
 - Then an 80/20 train/test split, **stratified by `author_id`**, with `seed: 42`
   (`config/default.yaml`), computed at runtime in
   `creator_analytics.data.train_test_split_by_creator`.
 
-Why stratify by creator: the project compares per-creator models with one global
-model. Stratifying guarantees that every creator has videos in both train and test, so
+Why stratify by creator: after the midterm, the project compares per-creator models
+with one global model. Stratifying guarantees that every creator has videos in both train and test, so
 both approaches are evaluated on exactly the same videos.
 
 ## Personal data

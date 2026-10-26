@@ -1,10 +1,8 @@
 # docs/slides/
 
-Put your presentation decks here, one subfolder or clearly-named file per milestone:
+| File | Milestone |
+|---|---|
+| [`midterm.pdf`](midterm.pdf) | Midterm presentation |
+| `final.pdf` | Final defense (to be added) |
 
-- `midterm/` (or `midterm.pdf`) — midterm check-in slides
-- `final/` (or `final.pdf`) — final defense slides
-
-Same rule as the poster: pull numbers from `results/metrics.json` rather than
-hand-copying them, so slides don't quietly drift out of sync with what the code
-actually produces.
+Numbers on the slides come from [`results/leaderboard.csv`](../../results/leaderboard.csv) and [`results/metrics.json`](../../results/metrics.json). If the results change, update the slides too.
