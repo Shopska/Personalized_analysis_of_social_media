@@ -33,3 +33,8 @@ caffeinate -i .venv/bin/jupyter nbconvert --to notebook --execute --inplace \
 caffeinate -i .venv/bin/jupyter nbconvert --to notebook --execute --inplace \
     --ExecutePreprocessor.timeout=3600 notebooks/07-feature-ablation.ipynb
 ```
+
+   ## Plan and related work
+
+   - [Plan to the final defense](docs/plan.md): next stages, priorities, risks
+   - [Related work](docs/related-work.md): research, existing tools, and where our project fits
