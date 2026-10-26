@@ -21,11 +21,10 @@ setup: ## Create .venv, install runtime+dev deps and this package, install pre-c
 	$(BIN)/python -m pip install -e .
 	$(BIN)/pre-commit install
 
-reproduce: ## data -> features -> global model -> per-creator models -> evaluation
+reproduce: ## data -> global baseline models -> evaluation
 	$(BIN)/python scripts/download_data.py
-	$(BIN)/python -m creator_analytics train --mode global
-	$(BIN)/python -m creator_analytics evaluate --mode global
-	$(BIN)/python -m creator_analytics train --mode per_creator
+	$(BIN)/python -m creator_analytics train
+	$(BIN)/python -m creator_analytics evaluate
 
 test: ## Run pytest
 	$(BIN)/pytest tests/ -v
